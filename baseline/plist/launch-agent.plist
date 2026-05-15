@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.codex.obsidian-sync</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>&lt;python-executable&gt;</string>
+		<string>-m</string>
+		<string>codex_obsidian_sync.cli</string>
+		<string>--config</string>
+		<string>/tmp/codex-obsidian-sync-python-baseline/config.toml</string>
+		<string>service-run</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>60</integer>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ThrottleInterval</key>
+	<integer>1</integer>
+	<key>StandardOutPath</key>
+	<string>/tmp/codex-obsidian-sync-python-baseline/.codex/obsidian-sync/launchd.stdout.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/codex-obsidian-sync-python-baseline/.codex/obsidian-sync/launchd.stderr.log</string>
+</dict>
+</plist>

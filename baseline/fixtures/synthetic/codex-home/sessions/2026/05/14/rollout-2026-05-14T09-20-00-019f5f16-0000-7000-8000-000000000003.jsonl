@@ -1,0 +1,2 @@
+{"payload": {"cwd": "/tmp/baseline-project", "id": "019f5f16-0000-7000-8000-000000000003", "originator": "Codex Desktop", "source": {"subagent": {"thread_spawn": {"parent_thread_id": "019f5f16-0000-7000-8000-000000000001"}}}, "timestamp": "2026-05-14T00:20:00Z"}, "timestamp": "2026-05-14T00:20:00Z", "type": "session_meta"}
+{"payload": {"content": [{"text": "Subagent body excluded by default", "type": "input_text"}], "role": "user", "type": "message"}, "timestamp": "2026-05-14T00:21:00Z", "type": "response_item"}

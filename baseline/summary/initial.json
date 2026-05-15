@@ -1,0 +1,12 @@
+{
+  "appended": 0,
+  "duration_ms": "<duration_ms>",
+  "fast_path": 0,
+  "paused": 0,
+  "processed": 2,
+  "rewritten": 2,
+  "skipped_invalid": 1,
+  "skipped_subagents": 1,
+  "total_rollouts": 4,
+  "unchanged": 0
+}

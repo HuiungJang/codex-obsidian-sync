@@ -1,0 +1,12 @@
+{
+  "executable": "<python-executable>",
+  "python": ">=3.13",
+  "runtime_root": "/tmp/codex-obsidian-sync-python-baseline",
+  "test_command": "PYTHONPATH=src <python3.13> -m unittest discover -s tests -v",
+  "volatile_normalization": [
+    "launchd.ProgramArguments[0]",
+    "metadata.executable",
+    "metadata.python",
+    "summary.duration_ms"
+  ]
+}

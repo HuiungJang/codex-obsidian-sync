@@ -1,0 +1,22 @@
+{
+  "covers": [
+    "conversation note",
+    "daily note",
+    "project note",
+    "append",
+    "invalid rollout",
+    "default subagent exclusion",
+    "stale offset fallback",
+    "redaction"
+  ],
+  "local_anonymized_fixture_convention": {
+    "commit_policy": "never commit raw real logs; run token and transcript leak checks first",
+    "environment_variable": "CODEX_OBSIDIAN_SYNC_ANON_FIXTURE",
+    "expected_shape": {
+      "codex_home": "path containing session_index.jsonl and sessions/",
+      "state_file": "copied sync-state.json",
+      "vault": "copied Obsidian vault fixture"
+    }
+  },
+  "minimal_committed_synthetic_fixture": "baseline/fixtures/synthetic"
+}
