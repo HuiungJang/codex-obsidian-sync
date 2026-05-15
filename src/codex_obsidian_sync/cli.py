@@ -25,7 +25,7 @@ from .launchd import (
     write_launch_agent_plist,
 )
 from .locking import process_lock
-from .redaction import redact_text
+from .redaction import redact_optional_text, redact_text
 from .service_runner import run_service
 from .service_state import load_service_state
 from .status_snapshot import build_status_snapshot, render_status_snapshot, status_snapshot_to_dict
@@ -375,7 +375,7 @@ def _envelope_to_dict(envelope: object) -> dict[str, object]:
         "parent_session_id": getattr(envelope, "parent_session_id"),
         "cwd": getattr(envelope, "cwd"),
         "project_slug": getattr(envelope, "project_slug"),
-        "thread_name": _redact_optional_text(getattr(envelope, "thread_name")),
+        "thread_name": redact_optional_text(getattr(envelope, "thread_name")),
         "title_seed": redact_text(getattr(envelope, "title_seed")),
         "started_at": getattr(envelope, "started_at"),
         "updated_at": getattr(envelope, "updated_at"),
@@ -391,13 +391,6 @@ def _envelope_to_dict(envelope: object) -> dict[str, object]:
             for message in messages
         ],
     }
-
-
-def _redact_optional_text(value: object) -> str | None:
-    if isinstance(value, str):
-        return redact_text(value)
-    return None
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

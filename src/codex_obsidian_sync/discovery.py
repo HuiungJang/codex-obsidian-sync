@@ -15,6 +15,7 @@ from .parser import (
     is_control_message,
     summarize_rollout_file,
 )
+from .redaction import redact_optional_text, redact_text
 from .state_store import MISSING, needs_processing
 
 UUID_PATTERN = re.compile(
@@ -66,7 +67,7 @@ def load_session_index(
                 continue
             entries[session_id] = SessionIndexEntry(
                 session_id=session_id,
-                thread_name=_string_or_none(payload.get("thread_name")),
+                thread_name=redact_optional_text(_string_or_none(payload.get("thread_name"))),
                 updated_at=_string_or_none(payload.get("updated_at")),
             )
     return entries
@@ -108,6 +109,8 @@ def build_session_envelope(
     messages = tuple(message_list)
 
     title_source = first_title_candidate_text(messages) or (index_entry.thread_name if index_entry else None)
+    if title_source:
+        title_source = redact_text(title_source)
     title_seed = slugify(title_source or canonical_meta.session_id)
     project_slug = slugify(project_name_from_cwd(canonical_meta.cwd))
     updated_at = (

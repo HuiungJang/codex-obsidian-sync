@@ -22,6 +22,7 @@ from .state_store import (
     upsert_state_entry,
 )
 from .writer import (
+    CONVERSATION_NOTE_MARKER,
     append_conversation_transcript,
     build_conversation_note_record,
     render_conversation_header,
@@ -33,6 +34,8 @@ from .writer import (
     write_sectioned_note,
     write_project_notes,
 )
+
+PRIVACY_MIGRATION_VERSION = 1
 
 
 def sync_once(
@@ -293,6 +296,7 @@ def sync_once(
     active_conversations = included_conversations(state)
     write_daily_notes(vault_root, active_conversations)
     write_project_notes(vault_root, active_conversations)
+    clear_stale_conversation_notes(vault_root, previous_conversations, active_conversations)
     clear_stale_index_notes(vault_root, previous_conversations, active_conversations)
     update_runtime_state(
         state,
@@ -358,6 +362,8 @@ def can_fast_skip_sync(
         return False
     if previous != file_fingerprint(session_index_path):
         return False
+    if state.get("privacy_migration_version") != PRIVACY_MIGRATION_VERSION:
+        return False
 
     for raw_path, state_entry in state.get("files", {}).items():
         if not isinstance(raw_path, str) or not isinstance(state_entry, dict):
@@ -383,6 +389,7 @@ def update_runtime_state(
 ) -> None:
     state["last_poll_at"] = utc_now_iso()
     state["session_index"] = file_fingerprint(session_index_path) if session_index_path.exists() else {}
+    state["privacy_migration_version"] = PRIVACY_MIGRATION_VERSION
     if discovery_complete is not None:
         state["discovery_complete"] = discovery_complete
 
@@ -441,6 +448,54 @@ def clear_stale_index_notes(
             header=f"# {project_slug}",
             managed_content="",
         )
+
+
+def clear_stale_conversation_notes(
+    vault_root: Path,
+    previous_conversations: list[dict[str, object]],
+    active_conversations: list[dict[str, object]],
+) -> None:
+    active_paths = conversation_note_paths(active_conversations)
+    for conversation in previous_conversations:
+        relative_path = conversation.get("conversation_note_path")
+        if not isinstance(relative_path, str) or not relative_path:
+            continue
+        if relative_path in active_paths:
+            continue
+        delete_stale_conversation_note(
+            vault_root,
+            relative_path,
+            conversation.get("conversation_note_fingerprint"),
+        )
+
+
+def conversation_note_paths(conversations: list[dict[str, object]]) -> set[str]:
+    paths: set[str] = set()
+    for conversation in conversations:
+        relative_path = conversation.get("conversation_note_path")
+        if isinstance(relative_path, str) and relative_path:
+            paths.add(relative_path)
+    return paths
+
+
+def delete_stale_conversation_note(
+    vault_root: Path,
+    relative_path: str,
+    expected_fingerprint: object,
+) -> bool:
+    if not isinstance(expected_fingerprint, dict):
+        return False
+    target = resolve_note_path(vault_root, relative_path)
+    if not target.exists():
+        return False
+    if expected_fingerprint != file_fingerprint(target):
+        return False
+    if CONVERSATION_NOTE_MARKER not in target.read_text(encoding="utf-8"):
+        return False
+    if expected_fingerprint != file_fingerprint(target):
+        return False
+    target.unlink()
+    return True
 
 
 def index_note_paths(conversations: list[dict[str, object]]) -> tuple[set[str], set[str]]:

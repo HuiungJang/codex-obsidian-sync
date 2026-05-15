@@ -24,15 +24,15 @@ JWT_PATTERN = re.compile(
     r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"
 )
 ASSIGNMENT_SECRET_PATTERN = re.compile(
-    r"(?i)\b"
+    r"(?i)(?P<key_quote>['\"]?)\b"
     r"(?P<key>[A-Z0-9_-]*"
     r"(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|"
     r"client[_-]?secret|"
     r"access[_-]?token|refresh[_-]?token|auth[_-]?token|id[_-]?token|github[_-]?token|"
     r"slack[_-]?(?:bot[_-]?)?token|npm[_-]?token|password|passwd|secret)"
     r"[A-Z0-9_-]*)"
-    r"\b(?P<separator>\s*[:=]\s*)"
-    r"(?P<quote>['\"]?)(?P<value>[^\s,'\"\[\]]{6,})(?P=quote)"
+    r"\b(?P=key_quote)(?P<separator>\s*[:=]\s*)"
+    r"(?P<value_quote>['\"]?)(?P<value>[^\s,'\"\[\]]{6,})(?P=value_quote)"
 )
 
 
@@ -51,6 +51,16 @@ def redact_text(text: str) -> str:
     return redacted
 
 
+def redact_optional_text(value: object) -> str | None:
+    if isinstance(value, str):
+        return redact_text(value)
+    return None
+
+
 def _redact_assignment(match: re.Match[str]) -> str:
-    quote = match.group("quote")
-    return f"{match.group('key')}{match.group('separator')}{quote}[REDACTED_SECRET]{quote}"
+    key_quote = match.group("key_quote")
+    value_quote = match.group("value_quote")
+    return (
+        f"{key_quote}{match.group('key')}{key_quote}"
+        f"{match.group('separator')}{value_quote}[REDACTED_SECRET]{value_quote}"
+    )

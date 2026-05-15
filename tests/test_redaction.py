@@ -74,6 +74,23 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn(secret_value, redacted)
         self.assertEqual(redacted, 'AWS_SECRET_ACCESS_KEY="[REDACTED_SECRET]"')
 
+    def test_redacts_quoted_secret_assignment_keys(self) -> None:
+        secret_value = "supersecretvalue"
+
+        cases = {
+            f'{{"client_secret": "{secret_value}"}}': '{"client_secret": "[REDACTED_SECRET]"}',
+            f"{{'api_key': '{secret_value}'}}": "{'api_key': '[REDACTED_SECRET]'}",
+            f'{{"access_token": "{secret_value}"}}': '{"access_token": "[REDACTED_SECRET]"}',
+            f'{{"password": "{secret_value}"}}': '{"password": "[REDACTED_SECRET]"}',
+        }
+
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                redacted = redact_text(raw)
+
+                self.assertNotIn(secret_value, redacted)
+                self.assertEqual(redacted, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
