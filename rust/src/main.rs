@@ -1,3 +1,11 @@
+use codex_obsidian_sync_rs::cli::{Cli, Command};
+
 fn main() {
-    println!("{}", codex_obsidian_sync_rs::BINARY_NAME);
+    let cli = Cli::parse();
+    match cli.command {
+        Command::SyncOnce(_) => {
+            eprintln!("sync-once is not implemented yet");
+            std::process::exit(1);
+        }
+    }
 }
