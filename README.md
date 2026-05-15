@@ -164,3 +164,7 @@ codex-obsidian-sync watch --vault "/absolute/path/to/your/obsidian-vault" --inte
 cd /path/to/codex-obsidian-sync
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
