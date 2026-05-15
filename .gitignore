@@ -24,6 +24,9 @@ build/
 dist/
 *.egg-info/
 
+# Rust build output
+rust/target/
+
 # Virtual environments
 .venv/
 venv/
