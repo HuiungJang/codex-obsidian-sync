@@ -1,0 +1,35 @@
+# Local editor and OS files
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Local notes and non-project working files
+docs/
+todo/
+todos/
+$tmp_root/
+
+# Python caches and build output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration and secrets
+.env
+.env.*
+config.toml

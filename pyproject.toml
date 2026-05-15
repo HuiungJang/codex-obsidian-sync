@@ -1,0 +1,14 @@
+[project]
+name = "codex-obsidian-sync"
+version = "0.1.0"
+description = "Sync local Codex CLI/Desktop conversations into an Obsidian vault"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+codex-obsidian-sync = "codex_obsidian_sync.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,20 @@
+# Minimal user-facing config.
+
+vault = "/absolute/path/to/your/obsidian-vault"
+interval_seconds = 60
+
+# Optional advanced overrides.
+# codex_home = "/absolute/path/to/.codex"
+# state_file = "/absolute/path/to/.codex/obsidian-sync/sync-state.json"
+# lock_file = "/absolute/path/to/.codex/obsidian-sync/sync-state.lock"
+# service_state_file = "/absolute/path/to/.codex/obsidian-sync/service-state.json"
+# service_runner_lock_file = "/absolute/path/to/.codex/obsidian-sync/service-runner.lock"
+# service_state_lock_file = "/absolute/path/to/.codex/obsidian-sync/service-state.lock"
+# launchd_plist_path = "/absolute/path/to/Library/LaunchAgents/com.codex.obsidian-sync.plist"
+# launchd_stdout_path = "/absolute/path/to/.codex/obsidian-sync/launchd.stdout.log"
+# launchd_stderr_path = "/absolute/path/to/.codex/obsidian-sync/launchd.stderr.log"
+# include_subagents = false
+# recent_days = 30
+# candidate_file_limit = 100
+# candidate_bytes_limit = 524288000
+# log_level = "INFO"
