@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod config;
+pub mod discovery;
 pub mod error;
 pub mod models;
 pub mod parser;
