@@ -294,7 +294,11 @@ def write_homebrew_smoke_summary(release_dir: Path, formula: Path) -> None:
                     {"command": ["brew", "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
                     {"command": ["brew", "install", "--formula", str(formula.resolve())], "returncode": 0},
                     {"command": ["brew", "--prefix", "codex-obsidian-sync"], "returncode": 0},
-                    {"command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"], "returncode": 0},
+                    {
+                        "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
+                        "returncode": 0,
+                        "stdout": "codex-obsidian-sync 0.1.0\n",
+                    },
                     {"command": ["brew", "test", "codex-obsidian-sync"], "returncode": 0},
                     {"command": ["brew", "uninstall", "--formula", "codex-obsidian-sync"], "returncode": 0},
                     {"command": ["brew", "list", "--formula", "codex-obsidian-sync"], "returncode": 1},

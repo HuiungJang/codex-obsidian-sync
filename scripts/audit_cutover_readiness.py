@@ -358,13 +358,14 @@ def audit_homebrew_smoke_summary(
     else:
         required_commands = {
             "install": ("install", "--formula"),
-            "version": ("--version",),
             "test": ("test", FORMULA_NAME),
             "uninstall": ("uninstall", "--formula", FORMULA_NAME),
         }
         for label, sequence in required_commands.items():
             if not has_successful_command(commands, sequence):
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
+        if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}"):
+            reasons.append("Homebrew smoke did not record successful installed binary version")
 
     return check("homebrew smoke summary", not reasons, details, reasons)
 
@@ -575,6 +576,21 @@ def has_successful_command(commands: list[Any], sequence: tuple[str, ...]) -> bo
         if not isinstance(command, dict):
             continue
         if command.get("returncode") == 0 and command_has_sequence(command.get("command"), sequence):
+            return True
+    return False
+
+
+def has_successful_version_command(commands: list[Any], expected_output: str) -> bool:
+    for command in commands:
+        if not isinstance(command, dict) or command.get("returncode") != 0:
+            continue
+        command_value = command.get("command")
+        if not isinstance(command_value, list):
+            continue
+        parts = [str(part) for part in command_value]
+        if len(parts) != 2 or Path(parts[0]).name != FORMULA_NAME or parts[1] != "--version":
+            continue
+        if str(command.get("stdout") or "").strip() == expected_output:
             return True
     return False
 

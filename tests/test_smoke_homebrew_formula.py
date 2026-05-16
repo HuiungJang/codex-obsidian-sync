@@ -46,6 +46,12 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
         self.assertTrue(report["dry_run"])
         self.assertTrue(report["vault_unchanged"])
         self.assertEqual(report["note_files"], 1)
+        version_commands = [
+            command
+            for command in report["commands"]
+            if command["command"][-1:] == ["--version"]
+        ]
+        self.assertEqual(version_commands[0]["stdout"].strip(), "codex-obsidian-sync 0.1.0")
         self.assertIn(f"install --formula {formula.resolve()}", log)
         self.assertIn("--prefix codex-obsidian-sync", log)
         self.assertIn("test codex-obsidian-sync", log)
