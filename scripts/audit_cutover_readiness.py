@@ -485,10 +485,12 @@ def audit_homebrew_smoke_summary(
     commands = summary.get("commands")
     installed_binary = summary.get("installed_binary")
     formula_value = summary.get("formula")
+    brew_value = summary.get("brew")
     expected_formula_sha256 = formula_sha256(formula_path)
     details.update(
         {
             "ok": summary.get("ok"),
+            "brew": brew_value,
             "formula_sha256": summary.get("formula_sha256"),
             "expected_formula_sha256": expected_formula_sha256,
             "summary_expected_version": summary.get("expected_version"),
@@ -518,6 +520,11 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke formula path is not absolute")
     elif strict_summary_paths and not summary_path_matches(formula_value, formula_path):
         reasons.append("Homebrew smoke formula path does not match generated formula")
+    if brew_value is not None:
+        if not isinstance(brew_value, str) or not brew_value:
+            reasons.append("Homebrew smoke brew path is missing")
+        elif not Path(brew_value).is_absolute():
+            reasons.append("Homebrew smoke brew path is not absolute")
     if summary.get("formula_sha256") != expected_formula_sha256:
         reasons.append("Homebrew smoke formula checksum does not match generated formula")
     if summary.get("installed_after") is not False:
@@ -538,10 +545,10 @@ def audit_homebrew_smoke_summary(
             "test": ("test", FORMULA_NAME),
             "uninstall": ("uninstall", "--formula", FORMULA_NAME),
         }
-        if not has_successful_brew_command_with_next_arg(commands, ("install", "--formula"), formula_value):
+        if not has_successful_brew_command_with_next_arg(commands, ("install", "--formula"), formula_value, brew_value):
             reasons.append("Homebrew smoke did not record successful brew install for recorded formula")
         for label, sequence in required_commands.items():
-            if not has_successful_brew_command(commands, sequence):
+            if not has_successful_brew_command(commands, sequence, brew_value):
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
         required_binary_commands = {
             "version": ("--version",),
@@ -888,7 +895,11 @@ def command_has_sequence(command: Any, sequence: tuple[str, ...]) -> bool:
     return any(tuple(parts[index : index + width]) == sequence for index in range(0, len(parts) - width + 1))
 
 
-def has_successful_brew_command(commands: list[Any], sequence: tuple[str, ...]) -> bool:
+def has_successful_brew_command(
+    commands: list[Any],
+    sequence: tuple[str, ...],
+    expected_brew: Any = None,
+) -> bool:
     for command in commands:
         if not isinstance(command, dict) or command.get("returncode") != 0:
             continue
@@ -897,12 +908,17 @@ def has_successful_brew_command(commands: list[Any], sequence: tuple[str, ...]) 
             continue
         parts = [str(part) for part in command_value]
         width = len(sequence)
-        if parts and command_uses_brew(parts[0]) and tuple(parts[1 : 1 + width]) == sequence:
+        if parts and command_uses_brew(parts[0], expected_brew) and tuple(parts[1 : 1 + width]) == sequence:
             return True
     return False
 
 
-def has_successful_brew_command_with_next_arg(commands: list[Any], sequence: tuple[str, ...], expected_arg: Any) -> bool:
+def has_successful_brew_command_with_next_arg(
+    commands: list[Any],
+    sequence: tuple[str, ...],
+    expected_arg: Any,
+    expected_brew: Any = None,
+) -> bool:
     if not isinstance(expected_arg, str) or not expected_arg:
         return False
     for command in commands:
@@ -915,7 +931,7 @@ def has_successful_brew_command_with_next_arg(commands: list[Any], sequence: tup
         width = len(sequence)
         if (
             len(parts) > 1 + width
-            and command_uses_brew(parts[0])
+            and command_uses_brew(parts[0], expected_brew)
             and tuple(parts[1 : 1 + width]) == sequence
             and parts[1 + width] == expected_arg
         ):
@@ -923,7 +939,9 @@ def has_successful_brew_command_with_next_arg(commands: list[Any], sequence: tup
     return False
 
 
-def command_uses_brew(command_arg0: str) -> bool:
+def command_uses_brew(command_arg0: str, expected_brew: Any = None) -> bool:
+    if isinstance(expected_brew, str) and expected_brew:
+        return command_arg0 == expected_brew
     return Path(command_arg0).name == "brew"
 
 

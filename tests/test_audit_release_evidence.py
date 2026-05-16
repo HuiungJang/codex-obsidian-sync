@@ -1020,6 +1020,7 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
                 release_dir,
                 formula,
                 brew_command="/opt/homebrew/bin/brew",
+                recorded_brew="/opt/homebrew/bin/brew",
             )
 
             result = subprocess.run(
@@ -1041,6 +1042,50 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, report["no_go_reasons"])
         self.assertTrue(report["ok"], report["no_go_reasons"])
+
+    def test_fails_when_homebrew_smoke_command_uses_different_brew_than_recorded(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(
+                release_dir,
+                formula,
+                brew_command="/tmp/brew",
+                recorded_brew="/opt/homebrew/bin/brew",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke did not record successful brew install for recorded formula",
+            report["no_go_reasons"],
+        )
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke did not record successful brew test",
+            report["no_go_reasons"],
+        )
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke did not record successful brew uninstall",
+            report["no_go_reasons"],
+        )
 
     def test_fails_when_homebrew_smoke_installed_binary_is_relative(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
@@ -1481,64 +1526,65 @@ def write_homebrew_smoke_summary(
     command_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
     installed_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
     brew_command: str = "brew",
+    recorded_brew: str | None = None,
 ) -> None:
     formula_path = str(formula.resolve())
     install_formula_path = install_formula or formula_path
-    (release_dir / "homebrew-smoke-summary.json").write_text(
-        json.dumps(
+    summary = {
+        "ok": True,
+        "formula": formula_path,
+        "formula_sha256": formula_sha256 or hashlib.sha256(formula.resolve().read_bytes()).hexdigest(),
+        "expected_version": "0.1.0",
+        "version": version,
+        "installed_binary": installed_binary,
+        "installed_after": installed_after,
+        "status_configured": True,
+        "status_json_parsed": True,
+        "dry_run": True,
+        "vault_unchanged": vault_unchanged,
+        "note_files": 1,
+        "commands": [
+            {"command": [brew_command, "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
+            {"command": [brew_command, "install", "--formula", install_formula_path], "returncode": 0},
+            {"command": [brew_command, "--prefix", "codex-obsidian-sync"], "returncode": 0},
             {
-                "ok": True,
-                "formula": formula_path,
-                "formula_sha256": formula_sha256 or hashlib.sha256(formula.resolve().read_bytes()).hexdigest(),
-                "expected_version": "0.1.0",
-                "version": version,
-                "installed_binary": installed_binary,
-                "installed_after": installed_after,
-                "status_configured": True,
-                "status_json_parsed": True,
-                "dry_run": True,
-                "vault_unchanged": vault_unchanged,
-                "note_files": 1,
-                "commands": [
-                    {"command": [brew_command, "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
-                    {"command": [brew_command, "install", "--formula", install_formula_path], "returncode": 0},
-                    {"command": [brew_command, "--prefix", "codex-obsidian-sync"], "returncode": 0},
-                    {
-                        "command": [command_binary, "--version"],
-                        "returncode": 0,
-                        "stdout": f"{version}\n",
-                    },
-                    {
-                        "command": [
-                            command_binary,
-                            "--config",
-                            "/tmp/config.toml",
-                            "status",
-                            "--json",
-                        ],
-                        "returncode": 0,
-                    },
-                    {
-                        "command": [
-                            command_binary,
-                            "--config",
-                            "/tmp/config.toml",
-                            "sync-once",
-                            "--dry-run-output",
-                            "/tmp/output",
-                        ],
-                        "returncode": 0,
-                    },
-                    {"command": [brew_command, "test", "codex-obsidian-sync"], "returncode": 0},
-                    {
-                        "command": [brew_command, "uninstall", "--formula", "codex-obsidian-sync"],
-                        "returncode": uninstall_returncode,
-                    },
-                    {"command": [brew_command, "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
+                "command": [command_binary, "--version"],
+                "returncode": 0,
+                "stdout": f"{version}\n",
+            },
+            {
+                "command": [
+                    command_binary,
+                    "--config",
+                    "/tmp/config.toml",
+                    "status",
+                    "--json",
                 ],
-            }
-        )
-        + "\n",
+                "returncode": 0,
+            },
+            {
+                "command": [
+                    command_binary,
+                    "--config",
+                    "/tmp/config.toml",
+                    "sync-once",
+                    "--dry-run-output",
+                    "/tmp/output",
+                ],
+                "returncode": 0,
+            },
+            {"command": [brew_command, "test", "codex-obsidian-sync"], "returncode": 0},
+            {
+                "command": [brew_command, "uninstall", "--formula", "codex-obsidian-sync"],
+                "returncode": uninstall_returncode,
+            },
+            {"command": [brew_command, "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
+        ],
+    }
+    if recorded_brew is not None:
+        summary["brew"] = recorded_brew
+    (release_dir / "homebrew-smoke-summary.json").write_text(
+        json.dumps(summary) + "\n",
         encoding="utf-8",
     )
 
