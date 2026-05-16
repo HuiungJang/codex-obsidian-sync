@@ -308,8 +308,8 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], tag: str, reposi
     if summary.get("repository") != repository:
         reasons.append("uploaded release evidence summary repository does not match requested repository")
     no_go = summary.get("no_go_reasons")
-    if no_go not in ([], None):
-        reasons.append("uploaded release evidence summary contains no-go reasons")
+    if no_go != []:
+        reasons.append("uploaded release evidence summary no_go_reasons is not an empty list")
     return reasons
 
 
