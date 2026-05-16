@@ -16,6 +16,7 @@ from record_cutover_monitor import (
 
 
 ORDERED_CHECKPOINTS = ("+5m", "+1h", "+4h", "+24h")
+COUNTER_FIELDS = ("skipped_invalid", "processed", "appended", "rewritten")
 ALLOWED_NON_RECORD_NAMES = {
     MARKER,
     "latest-status.stdout",
@@ -183,6 +184,9 @@ def validate_record(
         reasons.append(f"{expected_checkpoint}: recorded_at is missing or invalid")
     if parse_iso_datetime(record.get("last_success")) is None:
         reasons.append(f"{expected_checkpoint}: last_success is missing or invalid")
+    for field in COUNTER_FIELDS:
+        if not is_non_negative_int(record.get(field)):
+            reasons.append(f"{expected_checkpoint}: {field} is missing or not a non-negative integer")
     return reasons
 
 
@@ -218,7 +222,10 @@ def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
         if current_success:
             previous_success = max(previous_success, current_success) if previous_success else current_success
 
-        skipped_invalid = int(record.get("skipped_invalid") or 0)
+        skipped_invalid_value = record.get("skipped_invalid")
+        if not is_non_negative_int(skipped_invalid_value):
+            continue
+        skipped_invalid = skipped_invalid_value
         if previous_skipped_invalid is not None and skipped_invalid > previous_skipped_invalid:
             reasons.append(f"{checkpoint}: skipped_invalid increased from an earlier checkpoint")
         previous_skipped_invalid = max(previous_skipped_invalid or 0, skipped_invalid)
@@ -250,6 +257,10 @@ def parse_iso_datetime(value: Any) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def is_non_negative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:

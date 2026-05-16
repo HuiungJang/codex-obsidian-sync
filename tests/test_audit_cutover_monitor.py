@@ -208,6 +208,39 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("+1h: last_success is missing or invalid", report["no_go_reasons"])
 
+    def test_fails_when_counter_field_is_malformed_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(
+                root,
+                expected_binary=expected_binary,
+                counter_overrides={"+1h": {"skipped_invalid": "1"}},
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "+1h: skipped_invalid is missing or not a non-negative integer",
+            report["no_go_reasons"],
+        )
+
     def test_allows_latest_capture_artifacts(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
             root = Path(temp_dir)
@@ -376,6 +409,7 @@ def write_records(
     plist_labels: dict[str, str] | None = None,
     recorded_ats: dict[str, str] | None = None,
     last_successes: dict[str, str] | None = None,
+    counter_overrides: dict[str, dict[str, object]] | None = None,
 ) -> None:
     omit = omit or set()
     failed = failed or set()
@@ -383,6 +417,7 @@ def write_records(
     plist_labels = plist_labels or {}
     recorded_ats = recorded_ats or {}
     last_successes = last_successes or {}
+    counter_overrides = counter_overrides or {}
     checkpoints = {
         "+5m": ("plus5m.json", "2026-05-16T00:05:00+00:00"),
         "+1h": ("plus1h.json", "2026-05-16T01:00:00+00:00"),
@@ -393,6 +428,8 @@ def write_records(
         if checkpoint in omit:
             continue
         is_failed = checkpoint in failed
+        counters = {"skipped_invalid": 0, "processed": 12, "appended": 1, "rewritten": 11}
+        counters.update(counter_overrides.get(checkpoint, {}))
         (root / filename).write_text(
             json.dumps(
                 {
@@ -409,10 +446,7 @@ def write_records(
                     "service_command": "service-run",
                     "last_success": last_successes.get(checkpoint, last_success),
                     "last_error": "boom" if is_failed else "none",
-                    "skipped_invalid": 0,
-                    "processed": 12,
-                    "appended": 1,
-                    "rewritten": 11,
+                    **counters,
                 }
             )
             + "\n",
