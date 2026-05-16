@@ -44,6 +44,7 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(report["records"][0]["status_launchd_label"], "com.codex.obsidian-sync")
         self.assertEqual(report["records"][0]["plist_label"], "com.codex.obsidian-sync")
         self.assertTrue(report["records"][0]["launchctl_label_seen"])
+        self.assertEqual(report["records"][0]["launchctl_label"], "com.codex.obsidian-sync")
         self.assertEqual(report["records"][0]["launchctl_state"], "running")
         self.assertEqual(
             report["records"][0]["program_arguments"],
@@ -203,6 +204,35 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["ok"])
         self.assertIn("+1h: launchctl print did not include expected label", report["no_go_reasons"])
+
+    def test_fails_when_record_launchctl_header_label_is_unexpected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, launchctl_labels={"+1h": "com.codex.obsidian-sync.other"})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "+1h: launchctl print header does not target expected label",
+            report["no_go_reasons"],
+        )
 
     def test_fails_when_record_launchctl_state_is_not_running(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -862,6 +892,7 @@ def write_records(
     program_arguments_counts: dict[str, int] | None = None,
     program_arguments: dict[str, list[str]] | None = None,
     launchctl_label_seen: dict[str, bool] | None = None,
+    launchctl_labels: dict[str, str | None] | None = None,
     launchctl_states: dict[str, str | None] | None = None,
 ) -> None:
     omit = omit or set()
@@ -877,6 +908,7 @@ def write_records(
     program_arguments_counts = program_arguments_counts or {}
     program_arguments = program_arguments or {}
     launchctl_label_seen = launchctl_label_seen or {}
+    launchctl_labels = launchctl_labels or {}
     launchctl_states = launchctl_states or {}
     checkpoints = {
         "+5m": ("plus5m.json", "2026-05-16T00:05:00+00:00"),
@@ -911,6 +943,7 @@ def write_records(
             "launchd_loaded": True,
             "launchctl_loaded": True,
             "launchctl_state": launchctl_states.get(checkpoint, "running"),
+            "launchctl_label": launchctl_labels.get(checkpoint, "com.codex.obsidian-sync"),
             "launchctl_label_seen": launchctl_label_seen.get(checkpoint, True),
             "program_arguments": record_arguments,
             "program_arg0": expected_binary,

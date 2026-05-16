@@ -218,8 +218,8 @@ def validate_loaded_snapshot(
     )
     if not looks_loaded(launchctl):
         reasons.append(f"{name}: launchctl print did not return a loaded service")
-    elif not launchctl_contains_label(launchctl, expected_label):
-        reasons.append(f"{name}: launchctl print did not include expected label")
+    elif launchctl_service_label(launchctl) != expected_label:
+        reasons.append(f"{name}: launchctl print header does not target expected label")
     elif launchctl_state(launchctl) != "running":
         reasons.append(f"{name}: launchctl print state is not running")
     validate_last_error_clear(status, name, reasons)
@@ -395,6 +395,7 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
         "plist_label": plist.get("Label"),
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
+        "launchctl_label": launchctl_service_label(launchctl),
         "launchctl_state": launchctl_state(launchctl),
         "plist_path": status.get("plist_path"),
         "status_config_path": status.get("config_path"),
@@ -414,6 +415,7 @@ def stopped_snapshot_summary(status: dict[str, Any], launchctl: str) -> dict[str
         "status_launchd_label": status.get("launchd_label"),
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
+        "launchctl_label": launchctl_service_label(launchctl),
         "launchctl_state": launchctl_state(launchctl),
         "plist_path": status.get("plist_path"),
         "status_config_path": status.get("config_path"),
@@ -436,9 +438,12 @@ def looks_loaded(launchctl: str) -> bool:
     return not any(marker in lowered for marker in unloaded_markers)
 
 
-def launchctl_contains_label(launchctl: str, expected_label: str) -> bool:
-    label_pattern = re.escape(expected_label)
-    return re.search(rf"(^|[\s/]){label_pattern}(?=\s*(=|\{{|$))", launchctl) is not None
+def launchctl_service_label(launchctl: str) -> str | None:
+    match = re.search(
+        r"(?m)^[ \t]*(?:(?:gui|user)/\d+|system)/(?P<label>[A-Za-z0-9_.-]+)[ \t]*=[ \t]*\{",
+        launchctl,
+    )
+    return match.group("label") if match else None
 
 
 def launchctl_state(launchctl: str) -> str | None:

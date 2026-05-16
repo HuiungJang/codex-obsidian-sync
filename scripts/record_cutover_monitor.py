@@ -227,9 +227,10 @@ def build_record(
     launchctl_loaded = looks_loaded(launchctl)
     if not allow_unloaded and not launchctl_loaded:
         no_go_reasons.append("launchctl print did not return a loaded service")
-    launchctl_label_seen = launchctl_contains_label(launchctl, expected_label)
+    launchctl_label = launchctl_service_label(launchctl)
+    launchctl_label_seen = launchctl_label == expected_label
     if launchctl_loaded and not launchctl_label_seen:
-        no_go_reasons.append("launchctl print did not include expected label")
+        no_go_reasons.append("launchctl print header does not target expected label")
     launchctl_state_value = launchctl_state(launchctl)
     if launchctl_loaded and launchctl_state_value != "running":
         no_go_reasons.append("launchctl print state is not running")
@@ -277,6 +278,7 @@ def build_record(
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": launchctl_loaded,
         "launchctl_state": launchctl_state_value,
+        "launchctl_label": launchctl_label,
         "launchctl_label_seen": launchctl_label_seen,
         "status_config_path": status_config_path,
         "plist_path": status_plist_path,
@@ -439,9 +441,12 @@ def looks_loaded(launchctl: str) -> bool:
     return not any(marker in lowered for marker in unloaded_markers)
 
 
-def launchctl_contains_label(launchctl: str, expected_label: str) -> bool:
-    label_pattern = re.escape(expected_label)
-    return re.search(rf"(^|[\s/]){label_pattern}(?=\s*(=|\{{|$))", launchctl) is not None
+def launchctl_service_label(launchctl: str) -> str | None:
+    match = re.search(
+        r"(?m)^[ \t]*(?:(?:gui|user)/\d+|system)/(?P<label>[A-Za-z0-9_.-]+)[ \t]*=[ \t]*\{",
+        launchctl,
+    )
+    return match.group("label") if match else None
 
 
 def launchctl_state(launchctl: str) -> str | None:

@@ -190,6 +190,8 @@ def validate_record(
         reasons.append(f"{expected_checkpoint}: launchctl print state is not running")
     if record.get("launchctl_label_seen") is not True:
         reasons.append(f"{expected_checkpoint}: launchctl print did not include expected label")
+    if record.get("launchctl_label") != expected_label:
+        reasons.append(f"{expected_checkpoint}: launchctl print header does not target expected label")
     if record.get("status_launchd_label") != expected_label:
         reasons.append(f"{expected_checkpoint}: status launchd_label does not match expected label")
     if record.get("plist_label") != expected_label:
@@ -307,6 +309,7 @@ def summarize_record(record: dict[str, Any], path: Path) -> dict[str, Any]:
         "status_launchd_label": record.get("status_launchd_label"),
         "plist_label": record.get("plist_label"),
         "launchctl_label_seen": record.get("launchctl_label_seen"),
+        "launchctl_label": record.get("launchctl_label"),
         "launchctl_state": record.get("launchctl_state"),
         "program_arguments": record.get("program_arguments"),
         "program_arg0": record.get("program_arg0"),
