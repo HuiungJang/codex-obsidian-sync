@@ -310,6 +310,11 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], tag: str, reposi
     no_go = summary.get("no_go_reasons")
     if no_go != []:
         reasons.append("uploaded release evidence summary no_go_reasons is not an empty list")
+    checks = summary.get("checks")
+    if not isinstance(checks, list) or not checks:
+        reasons.append("uploaded release evidence summary checks are missing")
+    elif any(not isinstance(check, dict) or check.get("ok") is not True for check in checks):
+        reasons.append("uploaded release evidence summary contains failed checks")
     return reasons
 
 
