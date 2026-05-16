@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use codex_obsidian_sync_rs::config::{load_toml_config, resolve_service_paths};
 use codex_obsidian_sync_rs::error::SyncError;
@@ -138,6 +138,50 @@ fn run_service_preserves_last_success_when_later_sync_fails() {
     assert_eq!(state["last_error_type"], "WriteError");
     assert_eq!(state["pending"], false);
     assert!(state["next_eligible_at"].is_string());
+}
+
+#[test]
+fn run_service_processes_overdue_pending_work_after_sleep_wake() {
+    let root = temp_dir("sleep-wake-overdue");
+    let config_path = write_config(&root, true);
+    let config = load_toml_config(Some(&config_path)).unwrap();
+    let paths = resolve_service_paths(Some(&config_path), &config).unwrap();
+    let called = Cell::new(false);
+
+    mutate_service_state(
+        &paths.service_state_file,
+        &paths.service_state_lock_file,
+        |state| {
+            state.insert("pending".to_owned(), json!(true));
+            state.insert(
+                "next_eligible_at".to_owned(),
+                json!("2000-01-01T00:00:00+00:00"),
+            );
+        },
+    )
+    .unwrap();
+
+    let exit_code = run_service_with_sync(
+        Some(&config_path),
+        ServiceRunOptions {
+            settle_poll: Duration::ZERO,
+            settle_stable_polls: 0,
+            settle_max_wait: Duration::ZERO,
+            sleep_on_cooldown: true,
+        },
+        |_| {
+            called.set(true);
+            Ok(summary(1, 0))
+        },
+    )
+    .unwrap();
+    let state = load_service_state(&paths.service_state_file);
+
+    assert_eq!(exit_code, 0);
+    assert!(called.get());
+    assert_eq!(state["pending"], false);
+    assert!(state["last_success_at"].is_string());
+    assert!(state["next_eligible_at"].as_str().unwrap() > "2000-01-01T00:00:00+00:00");
 }
 
 #[test]
