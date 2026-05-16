@@ -271,6 +271,8 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
             "status_json_parsed": summary.get("status_json_parsed"),
             "dry_run": summary.get("dry_run"),
             "vault_unchanged": summary.get("vault_unchanged"),
+            "uninstalled": summary.get("uninstalled"),
+            "installed_after": summary.get("installed_after"),
             "inspect_count": summary.get("inspect_count"),
             "note_files": summary.get("note_files"),
         }
@@ -286,6 +288,10 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
     for field in ("status_configured", "status_json_parsed", "dry_run", "vault_unchanged"):
         if summary.get(field) is not True:
             reasons.append(f"release smoke {field} is not true")
+    if summary.get("uninstalled") is not True:
+        reasons.append("release smoke did not prove the artifact was uninstalled")
+    if summary.get("installed_after") is not False:
+        reasons.append("release smoke did not prove the artifact install was removed")
     if not positive_int(summary.get("inspect_count")):
         reasons.append("release smoke inspect_count is not positive")
     if not positive_int(summary.get("note_files")):

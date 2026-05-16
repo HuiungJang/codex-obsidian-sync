@@ -167,12 +167,19 @@ def run_smoke(
     if leaked:
         raise RuntimeError(f"Raw transcript text leaked into smoke artifacts: {leaked}")
 
+    uninstall_binary(installed_binary)
+    installed_after = installed_binary.exists()
+    if installed_after:
+        raise RuntimeError(f"Installed binary remained after uninstall: {installed_binary}")
+
     return {
         "ok": True,
         "tarball": str(tarball),
         "checksum": str(checksum),
         "work_dir": str(work_dir),
         "installed_binary": str(installed_binary),
+        "uninstalled": True,
+        "installed_after": installed_after,
         "version": version_line,
         "status_configured": status.get("configured"),
         "status_json_parsed": True,
@@ -234,6 +241,11 @@ def install_binary(source: Path, bin_dir: Path) -> Path:
     shutil.copy2(source, target)
     target.chmod(0o755)
     return target
+
+
+def uninstall_binary(target: Path) -> None:
+    if target.exists() or target.is_symlink():
+        target.unlink()
 
 
 def prepare_fixture(runtime: Path) -> None:

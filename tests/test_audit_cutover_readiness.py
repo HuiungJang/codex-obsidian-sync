@@ -329,6 +329,8 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                     "dry_run": True,
                     "processed": 1,
                     "vault_unchanged": True,
+                    "uninstalled": True,
+                    "installed_after": False,
                     "note_files": 1,
                 }
             )

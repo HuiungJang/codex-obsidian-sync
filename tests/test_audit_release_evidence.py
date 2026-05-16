@@ -81,6 +81,37 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_did_not_uninstall_artifact(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir, installed_after=True)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke did not prove the artifact install was removed",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_homebrew_smoke_did_not_uninstall(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -206,7 +237,11 @@ def write_formula(release_dir: Path, checksums: dict[str, str]) -> Path:
     return path
 
 
-def write_release_smoke_summaries(release_dir: Path, failed_target: str | None = None) -> None:
+def write_release_smoke_summaries(
+    release_dir: Path,
+    failed_target: str | None = None,
+    installed_after: bool = False,
+) -> None:
     for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
         (release_dir / f"codex-obsidian-sync-{target}.smoke-summary.json").write_text(
             json.dumps(
@@ -221,6 +256,8 @@ def write_release_smoke_summaries(release_dir: Path, failed_target: str | None =
                     "dry_run": True,
                     "processed": 1,
                     "vault_unchanged": True,
+                    "uninstalled": not installed_after,
+                    "installed_after": installed_after,
                     "note_files": 1,
                 }
             )
