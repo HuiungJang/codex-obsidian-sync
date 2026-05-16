@@ -45,6 +45,7 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(report["no_go_reasons"], [])
         self.assertCheckOk(report, "release artifact:aarch64-apple-darwin")
         self.assertCheckOk(report, "release artifact:x86_64-apple-darwin")
+        self.assertCheckOk(report, "release directory contents")
         self.assertCheckOk(report, "homebrew formula")
         self.assertCheckOk(report, "release smoke summary:aarch64-apple-darwin")
         self.assertCheckOk(report, "release smoke summary:x86_64-apple-darwin")
@@ -301,6 +302,38 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "homebrew smoke summary: Homebrew smoke did not record successful brew uninstall",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_release_dir_contains_unexpected_file(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            (release_dir / "debug.log").write_text("unexpected\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release directory contents: release directory contains unexpected files: ['debug.log']",
             report["no_go_reasons"],
         )
 

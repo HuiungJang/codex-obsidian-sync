@@ -11,6 +11,7 @@ from audit_cutover_readiness import (
     audit_homebrew_formula,
     audit_homebrew_smoke_summary,
     audit_release_dir,
+    audit_release_dir_contents,
     audit_release_smoke_summaries,
     build_result,
     cargo_version,
@@ -75,6 +76,7 @@ def audit_release_evidence(
     }
     checks = [
         *release_checks,
+        audit_release_dir_contents(release_dir, formula_path),
         audit_homebrew_formula(formula_path, version, repository, checksums),
         *audit_release_smoke_summaries(release_dir, version),
         audit_homebrew_smoke_summary(release_dir, formula_path, version),

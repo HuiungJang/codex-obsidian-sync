@@ -22,6 +22,7 @@ FORMULA_NAME = "codex-obsidian-sync"
 MONITOR_MARKER = ".codex-obsidian-sync-cutover-monitor"
 MONITOR_MARKER_CONTENT = "managed by record_cutover_monitor.py\n"
 TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin")
+RELEASE_EVIDENCE_SUMMARY = "release-evidence-summary.json"
 
 
 def main() -> int:
@@ -77,6 +78,7 @@ def main() -> int:
 
     checks = [
         *release_checks,
+        audit_release_dir_contents(release_dir, formula_path),
         audit_homebrew_formula(formula_path, version, repository, checksums),
         *audit_release_smoke_summaries(release_dir, version),
         audit_homebrew_smoke_summary(release_dir, formula_path, version),
@@ -132,6 +134,46 @@ def audit_release_dir(release_dir: Path | None) -> list[dict[str, Any]]:
 
     root = release_dir.expanduser().resolve()
     return [audit_release_target(root, target) for target in TARGETS]
+
+
+def expected_release_dir_file_names(formula_path: Path | None = None, release_dir: Path | None = None) -> set[str]:
+    names = {RELEASE_EVIDENCE_SUMMARY, "homebrew-smoke-summary.json"}
+    for target in TARGETS:
+        package_name = f"{FORMULA_NAME}-{target}.tar.gz"
+        names.update(
+            {
+                package_name,
+                f"{package_name}.sha256",
+                f"{FORMULA_NAME}-{target}.smoke-summary.json",
+            }
+        )
+    if formula_path is not None:
+        try:
+            if release_dir is None or formula_path.expanduser().resolve().parent == release_dir.expanduser().resolve():
+                names.add(formula_path.name)
+        except OSError:
+            names.add(formula_path.name)
+    return names
+
+
+def audit_release_dir_contents(release_dir: Path | None, formula_path: Path | None = None) -> dict[str, Any]:
+    details: dict[str, Any] = {"path": str(release_dir) if release_dir else None}
+    reasons: list[str] = []
+    if release_dir is None:
+        return check("release directory contents", False, details, ["release directory was not provided"])
+
+    root = release_dir.expanduser().resolve()
+    expected_names = expected_release_dir_file_names(formula_path, root)
+    details["path"] = str(root)
+    details["expected_files"] = sorted(expected_names)
+    if not root.is_dir():
+        return check("release directory contents", False, details, ["release directory is missing"])
+
+    unexpected_files = sorted(path.name for path in root.iterdir() if path.is_file() and path.name not in expected_names)
+    details["unexpected_files"] = unexpected_files
+    if unexpected_files:
+        reasons.append(f"release directory contains unexpected files: {unexpected_files}")
+    return check("release directory contents", not reasons, details, reasons)
 
 
 def audit_release_target(release_dir: Path, target: str) -> dict[str, Any]:
