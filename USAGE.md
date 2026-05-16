@@ -364,6 +364,13 @@ Rust migration build의 기본 실행은 실제 vault를 쓰지 않는 dry-run�
 
 cutover window 동안에는 Python implementation을 다시 설치하고 같은 config로 LaunchAgent를 되돌릴 수 있어야 한다.
 rollback은 Rust LaunchAgent를 먼저 내린 뒤 Python command가 plist에 다시 기록되는지 확인하는 순서로 진행한다.
+첫 Rust `--write` 또는 service cutover 전에는 상태와 LaunchAgent 증거를 백업한다.
+
+```bash
+python3 scripts/capture_cutover_backup.py \
+  --output-dir "/tmp/codex-obsidian-sync-backup-$(date +%Y%m%dT%H%M%S%z)" \
+  --state-file "$HOME/.codex/obsidian-sync/sync-state.json"
+```
 
 ```bash
 codex-obsidian-sync stop
