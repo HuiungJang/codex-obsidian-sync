@@ -12,6 +12,7 @@ use codex_obsidian_sync_rs::launchd::{
     bootout_launch_agent, bootstrap_launch_agent, ensure_launch_agent_dirs, query_launchd_status,
     render_launch_agent_plist, write_launch_agent_plist,
 };
+use codex_obsidian_sync_rs::service_runner::run_service;
 use codex_obsidian_sync_rs::service_state::load_service_state;
 use codex_obsidian_sync_rs::status_snapshot::{
     build_status_snapshot, query_launchd_loaded, render_status_snapshot,
@@ -127,7 +128,10 @@ fn run(cli: Cli) -> Result<(), SyncError> {
             println!("{content}");
             Ok(())
         }
-        Command::ServiceRun => Err(SyncError::UnsupportedCommand),
+        Command::ServiceRun => {
+            run_service(cli.config.as_deref())?;
+            Ok(())
+        }
     }
 }
 

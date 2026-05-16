@@ -11,6 +11,7 @@ pub mod models;
 pub mod parser;
 pub mod redaction;
 pub mod render;
+pub mod service_runner;
 pub mod service_state;
 pub mod state_store;
 pub mod status_snapshot;
