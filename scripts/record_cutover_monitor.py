@@ -161,6 +161,16 @@ def build_record(
         [int(record.get("skipped_invalid") or 0) for record in previous_records],
         default=skipped_invalid,
     )
+    last_success = status.get("last_success")
+    current_success = parse_iso_datetime(last_success)
+    previous_success = max(
+        [
+            parsed
+            for parsed in (parse_iso_datetime(record.get("last_success")) for record in previous_records)
+            if parsed is not None
+        ],
+        default=current_success,
+    )
     no_go_reasons: list[str] = []
 
     if checkpoint not in CHECKPOINTS:
@@ -179,6 +189,8 @@ def build_record(
         no_go_reasons.append("LaunchAgent does not end with service-run")
     if skipped_invalid > previous_skipped_invalid and not allow_skipped_invalid_increase:
         no_go_reasons.append("skipped_invalid increased from previous monitor record")
+    if current_success and previous_success and current_success < previous_success:
+        no_go_reasons.append("last_success regressed from previous monitor record")
 
     notes = [note_snapshot(path) for path in note_paths]
     missing_notes = [note["path"] for note in notes if not note["exists"]]
@@ -198,7 +210,7 @@ def build_record(
         "program_arguments_count": len(program_arguments),
         "service_command": program_arguments[-1] if program_arguments else None,
         "last_run": status.get("last_run"),
-        "last_success": status.get("last_success"),
+        "last_success": last_success,
         "last_error": status.get("last_error"),
         "skipped_invalid": skipped_invalid,
         "processed": int(last_summary.get("processed") or 0),
@@ -233,6 +245,15 @@ def note_snapshot(path: Path) -> dict[str, Any]:
         "size": stat.st_size,
         "mtime": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
     }
+
+
+def parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or value in {"none", "never run"}:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def sanitize_checkpoint(value: str) -> str:
