@@ -17,7 +17,18 @@ DEFAULT_LABEL = "com.codex.obsidian-sync"
 MARKER = ".codex-obsidian-sync-cutover-monitor"
 MARKER_CONTENT = "managed by record_cutover_monitor.py\n"
 CHECKPOINTS = {"+5m", "+1h", "+4h", "+24h"}
-SUMMARY_COUNTER_FIELDS = ("processed", "appended", "rewritten", "skipped_invalid")
+SUMMARY_COUNTER_FIELDS = (
+    "processed",
+    "appended",
+    "rewritten",
+    "skipped_subagents",
+    "skipped_invalid",
+    "unchanged",
+    "total_rollouts",
+    "paused",
+    "fast_path",
+    "duration_ms",
+)
 
 
 def main() -> int:
@@ -294,6 +305,12 @@ def build_record(
         "processed": summary_counters["processed"],
         "appended": summary_counters["appended"],
         "rewritten": summary_counters["rewritten"],
+        "skipped_subagents": summary_counters["skipped_subagents"],
+        "unchanged": summary_counters["unchanged"],
+        "total_rollouts": summary_counters["total_rollouts"],
+        "paused": summary_counters["paused"],
+        "fast_path": summary_counters["fast_path"],
+        "duration_ms": summary_counters["duration_ms"],
         "last_summary": last_summary,
         "notes": notes,
     }

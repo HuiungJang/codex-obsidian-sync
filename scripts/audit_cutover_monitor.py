@@ -11,6 +11,7 @@ from record_cutover_monitor import (
     DEFAULT_LABEL,
     MARKER,
     MARKER_CONTENT,
+    SUMMARY_COUNTER_FIELDS,
     checkpoint_record_name,
 )
 
@@ -22,7 +23,7 @@ CHECKPOINT_MIN_ELAPSED = {
     "+4h": timedelta(hours=4),
     "+24h": timedelta(hours=24),
 }
-COUNTER_FIELDS = ("skipped_invalid", "processed", "appended", "rewritten")
+COUNTER_FIELDS = SUMMARY_COUNTER_FIELDS
 ALLOWED_NON_RECORD_NAMES = {
     MARKER,
     "latest-status.stdout",
@@ -322,6 +323,12 @@ def summarize_record(record: dict[str, Any], path: Path) -> dict[str, Any]:
         "processed": record.get("processed"),
         "appended": record.get("appended"),
         "rewritten": record.get("rewritten"),
+        "skipped_subagents": record.get("skipped_subagents"),
+        "unchanged": record.get("unchanged"),
+        "total_rollouts": record.get("total_rollouts"),
+        "paused": record.get("paused"),
+        "fast_path": record.get("fast_path"),
+        "duration_ms": record.get("duration_ms"),
     }
 
 

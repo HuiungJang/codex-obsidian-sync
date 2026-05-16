@@ -69,6 +69,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(record["skipped_invalid"], 0)
         self.assertEqual(record["processed"], 12)
         self.assertTrue(record["notes"][0]["exists"])
+        self.assertEqual(record["duration_ms"], 120)
 
     def test_fails_when_plist_missing_config_argument(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -479,6 +480,50 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertIsNone(record["skipped_invalid"])
         self.assertIn(
             "last_summary skipped_invalid is missing or not a non-negative integer",
+            record["no_go_reasons"],
+        )
+
+    def test_records_no_go_when_required_summary_field_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            del status["last_summary"]["duration_ms"]
+            status_path.write_text(json.dumps(status) + "\n", encoding="utf-8")
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertIn(
+            "last_summary duration_ms is missing or not a non-negative integer",
             record["no_go_reasons"],
         )
 
@@ -957,7 +1002,13 @@ def write_status(
                     "processed": 12,
                     "appended": 1,
                     "rewritten": 11,
+                    "skipped_subagents": 0,
                     "skipped_invalid": skipped_invalid,
+                    "unchanged": 0,
+                    "total_rollouts": 12,
+                    "paused": 0,
+                    "fast_path": 0,
+                    "duration_ms": 120,
                 },
             }
         )

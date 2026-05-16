@@ -53,6 +53,7 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(report["records"][0]["config_path"], "/tmp/config.toml")
         self.assertEqual(report["records"][0]["status_config_path"], "/tmp/config.toml")
         self.assertEqual(report["records"][0]["plist_path"], "/tmp/agent.plist")
+        self.assertEqual(report["records"][0]["duration_ms"], 120)
 
     def test_refuses_symlinked_output_report_path(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -717,6 +718,39 @@ class AuditCutoverMonitorTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_required_summary_field_is_malformed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(
+                root,
+                expected_binary=expected_binary,
+                counter_overrides={"+1h": {"duration_ms": "120"}},
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "+1h: duration_ms is missing or not a non-negative integer",
+            report["no_go_reasons"],
+        )
+
     def test_allows_latest_capture_artifacts(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
             root = Path(temp_dir)
@@ -920,7 +954,18 @@ def write_records(
         if checkpoint in omit:
             continue
         is_failed = checkpoint in failed
-        counters = {"skipped_invalid": 0, "processed": 12, "appended": 1, "rewritten": 11}
+        counters = {
+            "processed": 12,
+            "appended": 1,
+            "rewritten": 11,
+            "skipped_subagents": 0,
+            "skipped_invalid": 0,
+            "unchanged": 0,
+            "total_rollouts": 12,
+            "paused": 0,
+            "fast_path": 0,
+            "duration_ms": 120,
+        }
         counters.update(counter_overrides.get(checkpoint, {}))
         config_path = config_paths.get(checkpoint, "/tmp/config.toml")
         status_config_path = status_config_paths.get(
