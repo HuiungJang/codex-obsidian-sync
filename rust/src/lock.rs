@@ -14,7 +14,15 @@ pub struct ProcessLock {
 }
 
 impl ProcessLock {
+    pub fn acquire(path: &Path) -> Result<Self, SyncError> {
+        Self::open(path, false)
+    }
+
     pub fn try_acquire(path: &Path) -> Result<Self, SyncError> {
+        Self::open(path, true)
+    }
+
+    fn open(path: &Path, nonblocking: bool) -> Result<Self, SyncError> {
         if !path.is_absolute() {
             return Err(SyncError::Lock);
         }
@@ -22,7 +30,7 @@ impl ProcessLock {
         fs::create_dir_all(parent).map_err(|_| SyncError::Lock)?;
         reject_symlink(path)?;
         let mut file = open_lock_file(path).map_err(|_| SyncError::Lock)?;
-        acquire_nonblocking(&file)?;
+        acquire_lock(&file, nonblocking)?;
         file.set_len(0).map_err(|_| SyncError::Lock)?;
         file.seek(SeekFrom::Start(0)).map_err(|_| SyncError::Lock)?;
         writeln!(
@@ -84,8 +92,12 @@ fn open_lock_file(path: &Path) -> io::Result<fs::File> {
 }
 
 #[cfg(unix)]
-fn acquire_nonblocking(file: &fs::File) -> Result<(), SyncError> {
-    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+fn acquire_lock(file: &fs::File, nonblocking: bool) -> Result<(), SyncError> {
+    let mut flags = libc::LOCK_EX;
+    if nonblocking {
+        flags |= libc::LOCK_NB;
+    }
+    let rc = unsafe { libc::flock(file.as_raw_fd(), flags) };
     if rc == 0 {
         return Ok(());
     }
@@ -98,6 +110,6 @@ fn acquire_nonblocking(file: &fs::File) -> Result<(), SyncError> {
 }
 
 #[cfg(not(unix))]
-fn acquire_nonblocking(_file: &fs::File) -> Result<(), SyncError> {
+fn acquire_lock(_file: &fs::File, _nonblocking: bool) -> Result<(), SyncError> {
     Ok(())
 }
