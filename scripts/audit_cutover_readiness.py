@@ -685,6 +685,7 @@ def audit_launchagent(
         details["configured"] = status.get("configured")
         details["launchd_loaded"] = status.get("launchd_loaded")
         details["last_error"] = status.get("last_error")
+        details["status_plist_path"] = status.get("plist_path")
         validate_status_flag(
             status,
             "configured",
@@ -703,6 +704,7 @@ def audit_launchagent(
         )
         if status.get("launchd_label") != DEFAULT_LAUNCHD_LABEL:
             reasons.append("status launchd_label does not match expected label")
+        validate_status_plist_path(status.get("plist_path"), reasons)
         if status.get("last_error") not in (None, "none", "never run"):
             reasons.append(f"last_error is {status.get('last_error')}")
 
@@ -718,6 +720,8 @@ def audit_launchagent(
     if not program_arguments:
         reasons.append("LaunchAgent ProgramArguments are missing")
     else:
+        if not Path(program_arguments[0]).is_absolute():
+            reasons.append("ProgramArguments[0] is not an absolute path")
         if program_arguments[-1] != "service-run":
             reasons.append("LaunchAgent does not end with service-run")
         validate_config_argument(program_arguments, reasons)
@@ -728,6 +732,13 @@ def audit_launchagent(
         reasons.append("current ProgramArguments[0] does not match expected pre-cutover binary")
 
     return check("launchagent current state", not reasons, details, reasons)
+
+
+def validate_status_plist_path(value: Any, reasons: list[str]) -> None:
+    if not isinstance(value, str) or not value:
+        reasons.append("status plist_path is missing")
+    elif not Path(value).is_absolute():
+        reasons.append("status plist_path is not absolute")
 
 
 def validated_program_arguments(value: Any, reasons: list[str]) -> list[str]:

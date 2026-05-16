@@ -1225,6 +1225,110 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_current_program_arg0_is_relative(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, "codex-obsidian-sync")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "launchagent current state: ProgramArguments[0] is not an absolute path",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_current_status_plist_path_is_relative(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, Path("Library/LaunchAgents/com.codex.obsidian-sync.plist"))
+            write_plist(plist_path, str(rollback_binary))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "launchagent current state: status plist_path is not absolute",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_current_config_path_is_relative(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
             root = Path(temp_dir)
