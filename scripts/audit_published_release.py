@@ -175,6 +175,22 @@ def allowed_asset_names() -> tuple[str, ...]:
     return (*required_asset_names(), PUBLISHED_RELEASE_AUDIT)
 
 
+def required_evidence_check_names() -> tuple[str, ...]:
+    names: list[str] = []
+    for target in TARGETS:
+        names.append(f"release artifact:{target}")
+    names.extend(
+        [
+            "release directory contents",
+            "homebrew formula",
+        ]
+    )
+    for target in TARGETS:
+        names.append(f"release smoke summary:{target}")
+    names.append("homebrew smoke summary")
+    return tuple(names)
+
+
 def prepare_download_dir(download_dir: Path) -> Path:
     requested_path = download_dir.expanduser()
     if requested_path.is_symlink():
@@ -315,6 +331,11 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], tag: str, reposi
         reasons.append("uploaded release evidence summary checks are missing")
     elif any(not isinstance(check, dict) or check.get("ok") is not True for check in checks):
         reasons.append("uploaded release evidence summary contains failed checks")
+    else:
+        uploaded_names = {check.get("name") for check in checks if isinstance(check.get("name"), str)}
+        missing_names = [name for name in required_evidence_check_names() if name not in uploaded_names]
+        if missing_names:
+            reasons.append(f"uploaded release evidence summary is missing checks: {missing_names}")
     return reasons
 
 
