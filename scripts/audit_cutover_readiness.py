@@ -370,8 +370,12 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         reasons.append("release smoke version does not match release version")
     if summary_path_name(summary.get("tarball")) != package_name:
         reasons.append("release smoke tarball does not match target artifact")
+    if not summary_path_is_absolute(summary.get("tarball")):
+        reasons.append("release smoke tarball path is not absolute")
     if summary_path_name(summary.get("checksum")) != checksum_name:
         reasons.append("release smoke checksum does not match target artifact")
+    if not summary_path_is_absolute(summary.get("checksum")):
+        reasons.append("release smoke checksum path is not absolute")
     if summary.get("tarball_sha256") != details["expected_tarball_sha256"]:
         reasons.append("release smoke tarball checksum does not match target artifact")
     if summary.get("checksum_sha256") != details["expected_checksum_sha256"]:
@@ -464,6 +468,8 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke version does not match release version")
     if summary_path_name(formula_value) != formula_path.name:
         reasons.append("Homebrew smoke formula does not match generated formula")
+    if not summary_path_is_absolute(formula_value):
+        reasons.append("Homebrew smoke formula path is not absolute")
     if summary.get("formula_sha256") != expected_formula_sha256:
         reasons.append("Homebrew smoke formula checksum does not match generated formula")
     if summary.get("installed_after") is not False:
@@ -737,6 +743,10 @@ def summary_path_name(value: Any) -> str | None:
     if not isinstance(value, str) or not value:
         return None
     return Path(value).name
+
+
+def summary_path_is_absolute(value: Any) -> bool:
+    return isinstance(value, str) and bool(value) and Path(value).is_absolute()
 
 
 def positive_int(value: Any) -> bool:
