@@ -358,11 +358,14 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
             "installed_after": summary.get("installed_after"),
             "inspect_count": summary.get("inspect_count"),
             "note_files": summary.get("note_files"),
+            "summary_no_go_reasons": summary.get("no_go_reasons"),
             "command_count": len(commands) if isinstance(commands, list) else None,
         }
     )
     if summary.get("ok") is not True:
         reasons.append("release smoke summary ok is not true")
+    if summary.get("no_go_reasons") not in ([], None):
+        reasons.append("release smoke summary contains no-go reasons")
     if summary.get("version") != f"{FORMULA_NAME} {version}":
         reasons.append("release smoke version does not match release version")
     if summary_path_name(summary.get("tarball")) != package_name:
@@ -445,11 +448,14 @@ def audit_homebrew_smoke_summary(
             "dry_run": summary.get("dry_run"),
             "vault_unchanged": summary.get("vault_unchanged"),
             "note_files": summary.get("note_files"),
+            "summary_no_go_reasons": summary.get("no_go_reasons"),
             "command_count": len(commands) if isinstance(commands, list) else None,
         }
     )
     if summary.get("ok") is not True:
         reasons.append("Homebrew smoke summary ok is not true")
+    if summary.get("no_go_reasons") not in ([], None):
+        reasons.append("Homebrew smoke summary contains no-go reasons")
     if summary.get("expected_version") != version:
         reasons.append("Homebrew smoke expected_version does not match release version")
     if summary.get("version") != f"{FORMULA_NAME} {version}":
