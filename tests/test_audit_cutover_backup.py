@@ -74,6 +74,33 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("backup file checksum mismatch: sync-state.json", report["no_go_reasons"])
 
+    def test_fails_when_required_file_size_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            manifest_path = backup_dir / "backup-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for entry in manifest["files"]:
+                if entry["name"] == "sync-state.json":
+                    del entry["size"]
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("required backup file size is missing or invalid: sync-state.json", report["no_go_reasons"])
+
     def test_fails_when_required_file_is_missing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
             backup_dir = create_backup(Path(temp_dir))

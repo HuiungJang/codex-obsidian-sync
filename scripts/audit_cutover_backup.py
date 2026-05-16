@@ -158,6 +158,8 @@ def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     expected_size = entry.get("size")
     if isinstance(expected_size, int) and expected_size != actual_size:
         reasons.append(f"backup file size mismatch: {name}")
+    if required and not is_non_negative_int(expected_size):
+        reasons.append(f"required backup file size is missing or invalid: {name}")
     expected_checksum = entry.get("sha256")
     if isinstance(expected_checksum, str) and expected_checksum != actual_checksum:
         reasons.append(f"backup file checksum mismatch: {name}")
@@ -184,6 +186,10 @@ def is_relative_to(path: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def is_non_negative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
