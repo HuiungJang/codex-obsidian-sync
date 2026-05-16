@@ -104,6 +104,7 @@ def audit_published_release(
 
         assets = release_assets_by_name(
             release,
+            tag=tag,
             github_api_url=github_api_url,
             repository=repository,
         )
@@ -252,6 +253,7 @@ def validate_release_metadata(release: dict[str, Any], tag: str, repository: str
 def release_assets_by_name(
     release: dict[str, Any],
     *,
+    tag: str,
     github_api_url: str,
     repository: str,
 ) -> dict[str, dict[str, Any]]:
@@ -260,6 +262,7 @@ def release_assets_by_name(
         raise RuntimeError("GitHub release assets are missing")
 
     asset_url_prefix = f"{github_api_url.rstrip('/')}/repos/{repository}/releases/assets/"
+    browser_download_prefix = expected_browser_download_prefix(release, tag, repository)
     by_name: dict[str, dict[str, Any]] = {}
     duplicate_names: set[str] = set()
     malformed_assets: list[str] = []
@@ -276,6 +279,14 @@ def release_assets_by_name(
             malformed_assets.append(f"{name} is missing a download URL")
         elif not asset_url.startswith(asset_url_prefix):
             malformed_assets.append(f"{name} download URL is outside the requested repository")
+        browser_download_url = asset.get("browser_download_url")
+        expected_browser_download_url = f"{browser_download_prefix}{name}"
+        if not isinstance(browser_download_url, str) or not browser_download_url:
+            malformed_assets.append(f"{name} is missing a browser download URL")
+        elif browser_download_url != expected_browser_download_url:
+            malformed_assets.append(
+                f"{name} browser download URL does not match the requested repository, tag, and asset name"
+            )
         size = asset.get("size")
         if not is_non_negative_int(size):
             malformed_assets.append(f"{name} is missing a non-negative size")
@@ -288,6 +299,16 @@ def release_assets_by_name(
         duplicates = ", ".join(sorted(duplicate_names))
         raise RuntimeError(f"GitHub release has duplicate asset names: {duplicates}")
     return by_name
+
+
+def expected_browser_download_prefix(release: dict[str, Any], tag: str, repository: str) -> str:
+    release_html_url = release.get("html_url")
+    suffix = f"/{repository}/releases/tag/{tag}"
+    if isinstance(release_html_url, str) and release_html_url.endswith(suffix):
+        host_prefix = release_html_url[: -len(suffix)]
+    else:
+        host_prefix = "https://github.com"
+    return f"{host_prefix}/{repository}/releases/download/{tag}/"
 
 
 def download_asset(
