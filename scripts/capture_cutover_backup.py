@@ -43,7 +43,11 @@ def main() -> int:
 
 
 def prepare_output_dir(path: Path) -> Path:
-    resolved = path.expanduser().resolve()
+    requested_path = path.expanduser()
+    if requested_path.is_symlink():
+        raise RuntimeError(f"backup path is a symlink: {requested_path}")
+
+    resolved = requested_path.resolve()
     validate_output_dir(resolved)
     if resolved.exists() and not resolved.is_dir():
         raise RuntimeError(f"backup path is not a directory: {resolved}")
@@ -124,6 +128,7 @@ def capture_status(args: argparse.Namespace, output_dir: Path) -> tuple[dict[str
 def capture_launchctl(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     destination = output_dir / "launchctl-print.txt"
     if args.launchctl_print_file:
+        reject_symlinked_evidence(args.launchctl_print_file)
         content = args.launchctl_print_file.read_text(encoding="utf-8")
         destination.write_text(content, encoding="utf-8")
     else:
@@ -136,7 +141,9 @@ def capture_launchctl(args: argparse.Namespace, output_dir: Path) -> dict[str, A
 
 
 def copy_backup_file(source: Path, destination: Path) -> dict[str, Any]:
-    resolved = source.expanduser().resolve()
+    requested_source = source.expanduser()
+    reject_symlinked_evidence(requested_source)
+    resolved = requested_source.resolve()
     if not resolved.is_file():
         return {
             "name": destination.name,
@@ -168,10 +175,16 @@ def file_record(name: str, path: Path, *, required: bool) -> dict[str, Any]:
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
+    reject_symlinked_evidence(path)
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise RuntimeError(f"JSON file is not an object: {path}")
     return value
+
+
+def reject_symlinked_evidence(path: Path) -> None:
+    if path.expanduser().is_symlink():
+        raise RuntimeError(f"evidence file is a symlink: {path}")
 
 
 def run_capture(command: list[str]) -> subprocess.CompletedProcess[str]:

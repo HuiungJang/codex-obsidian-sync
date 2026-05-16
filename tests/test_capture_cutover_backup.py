@@ -115,6 +115,95 @@ class CaptureCutoverBackupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("backup directory is not empty", result.stderr)
 
+    def test_refuses_symlinked_backup_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-test-") as temp_dir:
+            root = Path(temp_dir)
+            target_dir = root / "target"
+            output_dir = Path(tempfile.gettempdir()) / f"codex-obsidian-sync-backup-{root.name}"
+            target_dir.mkdir()
+            output_dir.symlink_to(target_dir, target_is_directory=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/capture_cutover_backup.py",
+                    "--output-dir",
+                    str(output_dir),
+                    "--status-json-file",
+                    str(root / "status.json"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            output_dir.unlink()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("backup path is a symlink", result.stderr)
+
+    def test_refuses_symlinked_backup_source_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-test-") as temp_dir:
+            root = Path(temp_dir)
+            state = root / "sync-state.json"
+            state_target = root / "sync-state-target.json"
+            plist = root / "agent.plist"
+            status = root / "status.json"
+            launchctl = root / "launchctl.txt"
+            output_dir = Path(tempfile.gettempdir()) / f"codex-obsidian-sync-backup-{root.name}"
+            state_target.write_text('{"files": {}}\n', encoding="utf-8")
+            state.symlink_to(state_target)
+            plist.write_text("<plist><dict></dict></plist>\n", encoding="utf-8")
+            status.write_text(
+                json.dumps({"configured": True, "state_file": str(state), "plist_path": str(plist)}) + "\n",
+                encoding="utf-8",
+            )
+            launchctl.write_text("state = running\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/capture_cutover_backup.py",
+                    "--output-dir",
+                    str(output_dir),
+                    "--status-json-file",
+                    str(status),
+                    "--launchctl-print-file",
+                    str(launchctl),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("evidence file is a symlink", result.stderr)
+
+    def test_refuses_symlinked_status_evidence_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-test-") as temp_dir:
+            root = Path(temp_dir)
+            status = root / "status.json"
+            status_target = root / "status-target.json"
+            output_dir = Path(tempfile.gettempdir()) / f"codex-obsidian-sync-backup-{root.name}"
+            status_target.write_text(json.dumps({"configured": True}) + "\n", encoding="utf-8")
+            status.symlink_to(status_target)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/capture_cutover_backup.py",
+                    "--output-dir",
+                    str(output_dir),
+                    "--status-json-file",
+                    str(status),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("evidence file is a symlink", result.stderr)
+
     def assertRecordChecksum(self, manifest: dict[str, object], name: str, checksum: str) -> None:
         files = manifest["files"]
         self.assertIsInstance(files, list)
