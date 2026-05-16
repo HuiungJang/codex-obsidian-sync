@@ -332,8 +332,8 @@ def parse_iso_datetime(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
     return parsed.astimezone(UTC)
 
 
