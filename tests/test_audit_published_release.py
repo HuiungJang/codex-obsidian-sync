@@ -529,6 +529,41 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_release_asset_names_are_duplicated(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            asset_name = "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            duplicate_asset = {
+                "name": asset_name,
+                "url": f"{API_URL}/repos/{REPOSITORY}/releases/assets/{asset_name}",
+                "browser_download_url": browser_download_url(asset_name),
+                "size": len(assets[asset_name]),
+            }
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    duplicate_asset,
+                    dict(duplicate_asset),
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release has duplicate asset names: codex-obsidian-sync-aarch64-apple-darwin.tar.gz",
+            result["no_go_reasons"],
+        )
+
     def test_refuses_non_empty_download_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
