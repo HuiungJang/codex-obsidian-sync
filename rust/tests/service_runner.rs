@@ -9,8 +9,11 @@ use codex_obsidian_sync_rs::error::SyncError;
 use codex_obsidian_sync_rs::lock::ProcessLock;
 use codex_obsidian_sync_rs::service_runner::{ServiceRunOptions, run_service_with_sync};
 use codex_obsidian_sync_rs::service_state::{load_service_state, mutate_service_state};
+use codex_obsidian_sync_rs::status_snapshot::build_status_snapshot;
 use codex_obsidian_sync_rs::sync::SyncSummary;
 use serde_json::json;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 #[test]
 fn run_service_records_summary_and_success() {
@@ -135,6 +138,60 @@ fn run_service_preserves_last_success_when_later_sync_fails() {
     assert_eq!(state["last_error_type"], "WriteError");
     assert_eq!(state["pending"], false);
     assert!(state["next_eligible_at"].is_string());
+}
+
+#[test]
+fn service_status_fields_survive_state_reload_after_restart() {
+    let root = temp_dir("restart-state");
+    let config_path = write_config(&root, true);
+    let config = load_toml_config(Some(&config_path)).unwrap();
+    let paths = resolve_service_paths(Some(&config_path), &config).unwrap();
+
+    mutate_service_state(
+        &paths.service_state_file,
+        &paths.service_state_lock_file,
+        |state| {
+            state.insert("pending".to_owned(), json!(true));
+            state.insert(
+                "last_run_finished_at".to_owned(),
+                json!("2026-05-16T00:00:00+00:00"),
+            );
+            state.insert(
+                "next_eligible_at".to_owned(),
+                json!("2026-05-16T00:01:00+00:00"),
+            );
+            state.insert(
+                "last_success_at".to_owned(),
+                json!("2026-05-15T23:59:00+00:00"),
+            );
+            state.insert("last_error_type".to_owned(), json!("WriteError"));
+            state.insert("last_error_summary".to_owned(), json!("write error"));
+            state.insert("last_summary".to_owned(), json!({"processed": 2}));
+        },
+    )
+    .unwrap();
+
+    let reloaded = load_service_state(&paths.service_state_file);
+    let now = OffsetDateTime::parse("2026-05-16T00:00:30Z", &Rfc3339).unwrap();
+    let snapshot = build_status_snapshot(&config, &paths, false, &reloaded, now);
+    let reloaded_again = load_service_state(&paths.service_state_file);
+
+    assert_eq!(snapshot.cooldown, "1s");
+    assert_eq!(snapshot.pending, "yes");
+    assert_eq!(snapshot.next_eligible_run, "2026-05-16T00:01:00+00:00");
+    assert_eq!(snapshot.last_success, "2026-05-15T23:59:00+00:00");
+    assert_eq!(snapshot.last_error, "WriteError: write error");
+    assert_eq!(snapshot.last_summary["processed"], 2);
+    assert_eq!(reloaded_again["pending"], true);
+    assert_eq!(
+        reloaded_again["next_eligible_at"],
+        "2026-05-16T00:01:00+00:00"
+    );
+    assert_eq!(
+        reloaded_again["last_success_at"],
+        "2026-05-15T23:59:00+00:00"
+    );
+    assert_eq!(reloaded_again["last_error_type"], "WriteError");
 }
 
 #[cfg(unix)]
