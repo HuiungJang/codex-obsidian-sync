@@ -126,6 +126,7 @@ impl Cli {
 
 #[derive(Debug, Parser)]
 #[command(name = BINARY_NAME)]
+#[command(bin_name = BINARY_NAME)]
 #[command(version)]
 #[command(about = "Sync local Codex conversations into an Obsidian vault")]
 #[command(disable_help_subcommand = true)]

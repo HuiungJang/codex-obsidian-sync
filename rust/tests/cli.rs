@@ -8,6 +8,7 @@ use codex_obsidian_sync_rs::cli::{Cli, Command as CliCommand};
 use insta_cmd::{assert_cmd_snapshot, get_cargo_bin};
 
 const BIN: &str = "codex-obsidian-sync-rs";
+const DISPLAY_BIN: &str = "codex-obsidian-sync";
 
 #[test]
 fn root_help_is_snapshotted() {
@@ -17,7 +18,7 @@ exit_code: 0
 ----- stdout -----
 Sync local Codex conversations into an Obsidian vault
 
-Usage: codex-obsidian-sync-rs [OPTIONS] <COMMAND>
+Usage: codex-obsidian-sync [OPTIONS] <COMMAND>
 
 Commands:
   setup            Write config and LaunchAgent plist
@@ -46,7 +47,7 @@ exit_code: 0
 ----- stdout -----
 Run one dry-run sync pass
 
-Usage: codex-obsidian-sync-rs sync-once [OPTIONS]
+Usage: codex-obsidian-sync sync-once [OPTIONS]
 
 Options:
       --vault <VAULT>                                  Obsidian vault root
@@ -74,7 +75,7 @@ fn version_reports_package_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(format!("{BIN} {}\n", env!("CARGO_PKG_VERSION")));
+        .stdout(format!("{DISPLAY_BIN} {}\n", env!("CARGO_PKG_VERSION")));
 }
 
 #[test]

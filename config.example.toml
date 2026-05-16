@@ -14,6 +14,7 @@ interval_seconds = 60
 # launchd_stdout_path = "/absolute/path/to/.codex/obsidian-sync/launchd.stdout.log"
 # launchd_stderr_path = "/absolute/path/to/.codex/obsidian-sync/launchd.stderr.log"
 # include_subagents = false
+# rust_service_write_enabled = false
 # recent_days = 30
 # candidate_file_limit = 100
 # candidate_bytes_limit = 524288000

@@ -6,21 +6,46 @@ Obsidian vault에 conversation / daily / project note를 생성한다.
 현재 기본 실행 UX는 `macOS + launchd` 기준이다.
 사용자는 `vault`와 `cooldown`만 설정하고, 이후에는 `Codex.app`와 `codex`를 그대로 쓰면 된다.
 `launchd`가 `cooldown` 간격마다 `service-run`을 깨우고, sync core가 바뀐 내용이 있을 때만 실제 note를 갱신한다.
+Rust migration build에서는 background write가 별도 config gate 뒤에 있다.
 
 상세 사용 가이드는 [USAGE.md](USAGE.md) 를 본다.
 
 ## Quick Start
 
-권장 설치:
+릴리스가 공개된 뒤 권장 설치는 GitHub Release의 macOS binary다.
+
+```bash
+VERSION=v0.1.0 # replace with the current release tag
+TARGET="$(uname -m)"
+case "$TARGET" in
+  arm64) TARGET=aarch64-apple-darwin ;;
+  x86_64) TARGET=x86_64-apple-darwin ;;
+  *) echo "unsupported architecture: $TARGET" >&2; exit 1 ;;
+esac
+
+BASE="https://github.com/HuiungJang/codex-obsidian-sync/releases/download/${VERSION}"
+curl -LO "${BASE}/codex-obsidian-sync-${TARGET}.tar.gz"
+curl -LO "${BASE}/codex-obsidian-sync-${TARGET}.tar.gz.sha256"
+shasum -a 256 -c "codex-obsidian-sync-${TARGET}.tar.gz.sha256"
+tar -xzf "codex-obsidian-sync-${TARGET}.tar.gz"
+mkdir -p ~/.local/bin
+install -m 0755 "codex-obsidian-sync-${TARGET}/codex-obsidian-sync" ~/.local/bin/codex-obsidian-sync
+```
+
+로컬 migration testing에서는 repo에서 Rust binary를 설치한다.
 
 ```bash
 cd /path/to/codex-obsidian-sync
-pipx install -e .
-pipx ensurepath
+cargo install --path rust --locked
+codex-obsidian-sync-rs --version
 ```
 
-Homebrew Python 환경에서는 `python3 -m pip install -e .`가 `externally-managed-environment`로 막힐 수 있다.
-이 도구는 Python application이라 `pipx`가 더 맞다.
+Homebrew tap은 cutover release에서 공개한다.
+
+```bash
+brew tap HuiungJang/codex-obsidian-sync
+brew install codex-obsidian-sync
+```
 
 최초 설정:
 
@@ -39,6 +64,12 @@ codex-obsidian-sync start
 ```bash
 codex-obsidian-sync status
 ```
+
+Rust migration build의 안전 기본값:
+
+- `sync-once`는 기본적으로 dry-run이다.
+- 실제 vault와 state를 쓰려면 `sync-once --write`를 명시한다.
+- `service-run`의 background write는 config에 `rust_service_write_enabled = true`가 있을 때만 동작한다.
 
 중지:
 
@@ -146,22 +177,23 @@ codex-obsidian-sync inspect-recent --limit 5
 codex-obsidian-sync inspect-rollout /absolute/path/to/rollout.jsonl
 ```
 
+dry-run 결과를 파일로 남기기:
+
+```bash
+codex-obsidian-sync sync-once --vault "/absolute/path/to/your/obsidian-vault" --dry-run-output /tmp/codex-obsidian-sync-dry-run
+```
+
 실제 vault로 한 번 동기화:
 
 ```bash
-codex-obsidian-sync sync-once --vault "/absolute/path/to/your/obsidian-vault"
-```
-
-기존 polling watch 모드:
-
-```bash
-codex-obsidian-sync watch --vault "/absolute/path/to/your/obsidian-vault" --interval 10
+codex-obsidian-sync sync-once --vault "/absolute/path/to/your/obsidian-vault" --write
 ```
 
 테스트:
 
 ```bash
 cd /path/to/codex-obsidian-sync
+cargo test --manifest-path rust/Cargo.toml
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 

@@ -18,4 +18,4 @@ pub mod status_snapshot;
 pub mod sync;
 pub mod writer;
 
-pub const BINARY_NAME: &str = "codex-obsidian-sync-rs";
+pub const BINARY_NAME: &str = "codex-obsidian-sync";
