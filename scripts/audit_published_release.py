@@ -229,13 +229,26 @@ def release_assets_by_name(release: dict[str, Any]) -> dict[str, dict[str, Any]]
 
     by_name: dict[str, dict[str, Any]] = {}
     duplicate_names: set[str] = set()
-    for asset in assets:
-        if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
+    malformed_assets: list[str] = []
+    for index, asset in enumerate(assets):
+        if not isinstance(asset, dict):
+            malformed_assets.append(f"#{index} is not an object")
             continue
-        name = asset["name"]
+        name = asset.get("name")
+        if not isinstance(name, str) or not name.strip():
+            malformed_assets.append(f"#{index} is missing a name")
+            continue
+        asset_url = asset.get("url")
+        if not isinstance(asset_url, str) or not asset_url:
+            malformed_assets.append(f"{name} is missing a download URL")
+        size = asset.get("size")
+        if not is_non_negative_int(size):
+            malformed_assets.append(f"{name} is missing a non-negative size")
         if name in by_name:
             duplicate_names.add(name)
         by_name[name] = asset
+    if malformed_assets:
+        raise RuntimeError("GitHub release has malformed asset metadata: " + "; ".join(malformed_assets))
     if duplicate_names:
         duplicates = ", ".join(sorted(duplicate_names))
         raise RuntimeError(f"GitHub release has duplicate asset names: {duplicates}")
@@ -255,20 +268,26 @@ def download_asset(
         raise RuntimeError(f"release asset URL is missing: {name}")
     if not isinstance(name, str) or not name:
         raise RuntimeError("release asset name is missing")
+    expected_size = asset.get("size")
+    if not is_non_negative_int(expected_size):
+        raise RuntimeError(f"release asset size is missing or invalid for {name}")
 
     payload = read_bytes_url(asset_url, github_token, "application/octet-stream", opener)
-    destination.write_bytes(payload)
-    expected_size = asset.get("size")
-    size_matches = not isinstance(expected_size, int) or expected_size == len(payload)
+    size_matches = expected_size == len(payload)
     if not size_matches:
         raise RuntimeError(f"release asset size mismatch for {name}")
+    destination.write_bytes(payload)
     return {
         "name": name,
         "path": str(destination),
         "size": len(payload),
-        "expected_size": expected_size if isinstance(expected_size, int) else None,
+        "expected_size": expected_size,
         "size_matches": size_matches,
     }
+
+
+def is_non_negative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def read_uploaded_evidence_summary(path: Path) -> dict[str, Any]:

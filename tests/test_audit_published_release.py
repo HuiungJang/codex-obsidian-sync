@@ -147,6 +147,58 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertEqual(result["extra_assets"], ["debug.log"])
         self.assertIn("unexpected release asset: debug.log", result["no_go_reasons"])
 
+    def test_fails_when_release_asset_entry_is_not_an_object(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            opener = FakeGitHubOpener(assets, release_assets=["not an asset"])
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("GitHub release has malformed asset metadata: #0 is not an object", result["no_go_reasons"])
+
+    def test_fails_when_release_asset_metadata_is_incomplete(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    {
+                        "name": "codex-obsidian-sync-aarch64-apple-darwin.tar.gz",
+                        "url": "",
+                        "size": "123",
+                    },
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release has malformed asset metadata: "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz is missing a download URL; "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz is missing a non-negative size",
+            result["no_go_reasons"],
+        )
+
     def test_refuses_non_empty_download_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
@@ -193,11 +245,13 @@ class FakeGitHubOpener:
         draft: object = False,
         prerelease: object = False,
         include_publication_flags: bool = True,
+        release_assets: list[Any] | None = None,
     ) -> None:
         self.assets = assets
         self.draft = draft
         self.prerelease = prerelease
         self.include_publication_flags = include_publication_flags
+        self.release_assets = release_assets
         self.release_url = f"{API_URL}/repos/{REPOSITORY}/releases/tags/v0.1.0"
 
     def __call__(self, request: Any) -> "FakeResponse":
@@ -211,17 +265,18 @@ class FakeGitHubOpener:
         raise RuntimeError(f"unexpected URL: {request.full_url}")
 
     def release_json(self) -> dict[str, Any]:
+        release_assets = self.release_assets if self.release_assets is not None else [
+            {
+                "name": name,
+                "url": f"{API_URL}/assets/{name}",
+                "size": len(payload),
+            }
+            for name, payload in sorted(self.assets.items())
+        ]
         release = {
             "tag_name": "v0.1.0",
             "html_url": "https://github.example.test/HuiungJang/codex-obsidian-sync/releases/tag/v0.1.0",
-            "assets": [
-                {
-                    "name": name,
-                    "url": f"{API_URL}/assets/{name}",
-                    "size": len(payload),
-                }
-                for name, payload in sorted(self.assets.items())
-            ],
+            "assets": release_assets,
         }
         if self.include_publication_flags:
             release["draft"] = self.draft
