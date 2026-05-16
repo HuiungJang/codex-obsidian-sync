@@ -264,10 +264,12 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         return check(f"release smoke summary:{target}", False, details, reasons)
 
     commands = summary.get("commands")
+    installed_binary = summary.get("installed_binary")
     details.update(
         {
             "ok": summary.get("ok"),
             "version": summary.get("version"),
+            "installed_binary": installed_binary,
             "status_configured": summary.get("status_configured"),
             "status_json_parsed": summary.get("status_json_parsed"),
             "dry_run": summary.get("dry_run"),
@@ -298,6 +300,8 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         reasons.append("release smoke inspect_count is not positive")
     if not positive_int(summary.get("note_files")):
         reasons.append("release smoke note_files is not positive")
+    if not isinstance(installed_binary, str) or not installed_binary:
+        reasons.append("release smoke installed_binary is missing")
     if not isinstance(commands, list):
         reasons.append("release smoke commands are missing")
     else:
@@ -308,9 +312,9 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
             "sync": ("sync-once", "--dry-run-output"),
         }
         for label, sequence in required_binary_commands.items():
-            if not has_successful_installed_binary_command(commands, sequence):
+            if not has_successful_installed_binary_command(commands, sequence, installed_binary):
                 reasons.append(f"release smoke did not record successful installed binary {label}")
-        if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}"):
+        if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}", installed_binary):
             reasons.append("release smoke did not record expected installed binary version output")
 
     return check(f"release smoke summary:{target}", not reasons, details, reasons)
@@ -340,11 +344,13 @@ def audit_homebrew_smoke_summary(
         return check("homebrew smoke summary", False, details, reasons)
 
     commands = summary.get("commands")
+    installed_binary = summary.get("installed_binary")
     details.update(
         {
             "ok": summary.get("ok"),
             "summary_expected_version": summary.get("expected_version"),
             "version": summary.get("version"),
+            "installed_binary": installed_binary,
             "installed_after": summary.get("installed_after"),
             "status_configured": summary.get("status_configured"),
             "status_json_parsed": summary.get("status_json_parsed"),
@@ -369,6 +375,8 @@ def audit_homebrew_smoke_summary(
             reasons.append(f"Homebrew smoke {field} is not true")
     if not positive_int(summary.get("note_files")):
         reasons.append("Homebrew smoke note_files is not positive")
+    if not isinstance(installed_binary, str) or not installed_binary:
+        reasons.append("Homebrew smoke installed_binary is missing")
     if not isinstance(commands, list):
         reasons.append("Homebrew smoke commands are missing")
     else:
@@ -386,9 +394,9 @@ def audit_homebrew_smoke_summary(
             "sync": ("sync-once", "--dry-run-output"),
         }
         for label, sequence in required_binary_commands.items():
-            if not has_successful_installed_binary_command(commands, sequence):
+            if not has_successful_installed_binary_command(commands, sequence, installed_binary):
                 reasons.append(f"Homebrew smoke did not record successful installed binary {label}")
-        if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}"):
+        if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}", installed_binary):
             reasons.append("Homebrew smoke did not record expected installed binary version output")
 
     return check("homebrew smoke summary", not reasons, details, reasons)
@@ -604,7 +612,7 @@ def has_successful_command(commands: list[Any], sequence: tuple[str, ...]) -> bo
     return False
 
 
-def has_successful_version_command(commands: list[Any], expected_output: str) -> bool:
+def has_successful_version_command(commands: list[Any], expected_output: str, expected_binary: Any) -> bool:
     for command in commands:
         if not isinstance(command, dict) or command.get("returncode") != 0:
             continue
@@ -612,14 +620,18 @@ def has_successful_version_command(commands: list[Any], expected_output: str) ->
         if not isinstance(command_value, list):
             continue
         parts = [str(part) for part in command_value]
-        if len(parts) != 2 or Path(parts[0]).name != FORMULA_NAME or parts[1] != "--version":
+        if len(parts) != 2 or not command_uses_expected_binary(parts[0], expected_binary) or parts[1] != "--version":
             continue
         if str(command.get("stdout") or "").strip() == expected_output:
             return True
     return False
 
 
-def has_successful_installed_binary_command(commands: list[Any], sequence: tuple[str, ...]) -> bool:
+def has_successful_installed_binary_command(
+    commands: list[Any],
+    sequence: tuple[str, ...],
+    expected_binary: Any,
+) -> bool:
     for command in commands:
         if not isinstance(command, dict) or command.get("returncode") != 0:
             continue
@@ -627,9 +639,13 @@ def has_successful_installed_binary_command(commands: list[Any], sequence: tuple
         if not isinstance(command_value, list) or not command_value:
             continue
         parts = [str(part) for part in command_value]
-        if Path(parts[0]).name == FORMULA_NAME and command_has_sequence(parts, sequence):
+        if command_uses_expected_binary(parts[0], expected_binary) and command_has_sequence(parts, sequence):
             return True
     return False
+
+
+def command_uses_expected_binary(command_arg0: str, expected_binary: Any) -> bool:
+    return isinstance(expected_binary, str) and bool(expected_binary) and command_arg0 == expected_binary
 
 
 def resolve_executable(value: str | None) -> Path | None:

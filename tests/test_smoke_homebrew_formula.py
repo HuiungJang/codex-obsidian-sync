@@ -40,6 +40,7 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report["ok"])
         self.assertEqual(report["version"], "codex-obsidian-sync 0.1.0")
+        self.assertTrue(report["installed_binary"].endswith("/bin/codex-obsidian-sync"))
         self.assertFalse(report["installed_after"])
         self.assertTrue(report["status_configured"])
         self.assertTrue(report["status_json_parsed"])

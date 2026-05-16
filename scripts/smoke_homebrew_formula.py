@@ -87,6 +87,7 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
         "brew": str(brew_path),
         "expected_version": expected_version,
         "version": version_output,
+        "installed_binary": str(installed_binary),
         "installed_after": installed_after,
         **smoke_details,
         "commands": commands,

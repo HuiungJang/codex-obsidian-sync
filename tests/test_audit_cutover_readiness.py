@@ -484,12 +484,14 @@ def write_fake_binary(path: Path, version: str) -> Path:
 
 def write_release_smoke_summaries(release_dir: Path) -> None:
     for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
+        installed_binary = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync"
         (release_dir / f"codex-obsidian-sync-{target}.smoke-summary.json").write_text(
             json.dumps(
                 {
                     "ok": True,
                     "tarball": str(release_dir / f"codex-obsidian-sync-{target}.tar.gz"),
                     "checksum": str(release_dir / f"codex-obsidian-sync-{target}.tar.gz.sha256"),
+                    "installed_binary": installed_binary,
                     "version": "codex-obsidian-sync 0.1.0",
                     "status_configured": True,
                     "status_json_parsed": True,
@@ -502,13 +504,13 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                     "note_files": 1,
                     "commands": [
                         {
-                            "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
+                            "command": [installed_binary, "--version"],
                             "returncode": 0,
                             "stdout": "codex-obsidian-sync 0.1.0\n",
                         },
                         {
                             "command": [
-                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                installed_binary,
                                 "--config",
                                 "/tmp/config.toml",
                                 "status",
@@ -518,7 +520,7 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                         },
                         {
                             "command": [
-                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                installed_binary,
                                 "inspect-recent",
                                 "--codex-home",
                                 "/tmp/.codex",
@@ -529,7 +531,7 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                         },
                         {
                             "command": [
-                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                installed_binary,
                                 "--config",
                                 "/tmp/config.toml",
                                 "sync-once",
@@ -553,6 +555,7 @@ def write_homebrew_smoke_summary(
     version: str = "codex-obsidian-sync 0.1.0",
     version_command_stdout: str = "codex-obsidian-sync 0.1.0\n",
 ) -> None:
+    installed_binary = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync"
     (release_dir / "homebrew-smoke-summary.json").write_text(
         json.dumps(
             {
@@ -560,6 +563,7 @@ def write_homebrew_smoke_summary(
                 "formula": str(formula.resolve()),
                 "expected_version": "0.1.0",
                 "version": version,
+                "installed_binary": installed_binary,
                 "installed_after": False,
                 "status_configured": True,
                 "status_json_parsed": True,
@@ -571,13 +575,13 @@ def write_homebrew_smoke_summary(
                     {"command": ["brew", "install", "--formula", str(formula.resolve())], "returncode": 0},
                     {"command": ["brew", "--prefix", "codex-obsidian-sync"], "returncode": 0},
                     {
-                        "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
+                        "command": [installed_binary, "--version"],
                         "returncode": 0,
                         "stdout": version_command_stdout,
                     },
                     {
                         "command": [
-                            "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                            installed_binary,
                             "--config",
                             "/tmp/config.toml",
                             "status",
@@ -587,7 +591,7 @@ def write_homebrew_smoke_summary(
                     },
                     {
                         "command": [
-                            "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                            installed_binary,
                             "--config",
                             "/tmp/config.toml",
                             "sync-once",
