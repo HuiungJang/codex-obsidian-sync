@@ -98,8 +98,10 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
             else:
                 seen_names: set[str] = set()
                 seen_paths: set[Path] = set()
+                manifest_entries: list[dict[str, Any]] = []
                 for entry in file_entries:
                     if isinstance(entry, dict):
+                        manifest_entries.append(entry)
                         name = str(entry.get("name") or "")
                         if name in seen_names:
                             no_go_reasons.append(f"duplicate backup file entry: {name}")
@@ -115,6 +117,7 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
                         no_go_reasons.extend(result["no_go_reasons"])
                     else:
                         no_go_reasons.append("backup manifest contains a non-object file entry")
+                no_go_reasons.extend(validate_status_sources(root, manifest_entries))
         no_go_reasons.extend(audit_directory_contents(root, file_results))
 
     required_names = {result["name"] for result in file_results if result.get("required")}
@@ -131,6 +134,64 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
         "files": file_results,
         "no_go_reasons": no_go_reasons,
     }
+
+
+def validate_status_sources(root: Path, file_entries: list[dict[str, Any]]) -> list[str]:
+    status_path = root / "status.json"
+    if status_path.is_symlink() or not status_path.is_file():
+        return []
+    try:
+        status = read_json_object(status_path)
+    except (OSError, json.JSONDecodeError, RuntimeError) as error:
+        return [f"backup status.json is invalid: {error}"]
+
+    entries_by_name = {str(entry.get("name") or ""): entry for entry in file_entries}
+    return (
+        validate_source_path(
+            entries_by_name,
+            backup_name="sync-state.json",
+            status=status,
+            status_field="state_file",
+        )
+        + validate_source_path(
+            entries_by_name,
+            backup_name="launchagent.plist",
+            status=status,
+            status_field="plist_path",
+        )
+    )
+
+
+def validate_source_path(
+    entries_by_name: dict[str, dict[str, Any]],
+    *,
+    backup_name: str,
+    status: dict[str, Any],
+    status_field: str,
+) -> list[str]:
+    reasons: list[str] = []
+    status_value = status.get(status_field)
+    if not isinstance(status_value, str) or not status_value:
+        reasons.append(f"backup status.json {status_field} is missing")
+        return reasons
+    status_path = Path(status_value).expanduser()
+    if not status_path.is_absolute():
+        reasons.append(f"backup status.json {status_field} is not absolute")
+        return reasons
+
+    entry = entries_by_name.get(backup_name)
+    if entry is None:
+        return reasons
+    source_value = entry.get("source")
+    if not isinstance(source_value, str) or not source_value:
+        reasons.append(f"backup file source is missing: {backup_name}")
+        return reasons
+    source_path = Path(source_value).expanduser()
+    if not source_path.is_absolute():
+        reasons.append(f"backup file source is not absolute: {backup_name}")
+    elif source_path.resolve() != status_path.resolve():
+        reasons.append(f"backup file source does not match status {status_field}: {backup_name}")
+    return reasons
 
 
 def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
