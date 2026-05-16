@@ -122,3 +122,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --title "${GITHUB_REF_NAME}" --notes "Rust binary release ${GITHUB_REF_NAME}"
+
+      - name: Smoke Homebrew formula
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -euo pipefail
+          python3 scripts/smoke_homebrew_formula.py \
+            --formula dist/codex-obsidian-sync.rb \
+            --expected-version "${GITHUB_REF_NAME}" \
+            --output dist/homebrew-smoke-summary.json
