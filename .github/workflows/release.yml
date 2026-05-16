@@ -126,7 +126,10 @@ jobs:
       - name: Publish prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --prerelease --title "${GITHUB_REF_NAME}" --notes "Rust binary release ${GITHUB_REF_NAME}"
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --prerelease --title "${GITHUB_REF_NAME}" --notes "Rust binary release ${GITHUB_REF_NAME}"
+          touch dist/release-created
 
       - name: Smoke Homebrew formula
         env:
@@ -180,4 +183,17 @@ jobs:
       - name: Publish published-release audit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" dist/published-release-audit.json --clobber
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" dist/published-release-audit.json --clobber
+          touch dist/release-complete
+
+      - name: Delete incomplete release on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -f dist/release-created && ! -f dist/release-complete ]]; then
+            gh release delete "${GITHUB_REF_NAME}" --yes || true
+          fi

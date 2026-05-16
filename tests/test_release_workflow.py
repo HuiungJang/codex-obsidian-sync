@@ -25,6 +25,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         promote_step = workflow.index("- name: Promote verified release")
         published_audit_step = workflow.index("- name: Audit published release assets")
         publish_published_audit_step = workflow.index("- name: Publish published-release audit")
+        cleanup_step = workflow.index("- name: Delete incomplete release on failure")
 
         self.assertLess(formula_step, publish_step)
         self.assertLess(publish_step, smoke_step)
@@ -33,6 +34,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(summaries_step, promote_step)
         self.assertLess(promote_step, published_audit_step)
         self.assertLess(published_audit_step, publish_published_audit_step)
+        self.assertLess(publish_published_audit_step, cleanup_step)
         self.assertIn("actions/checkout@v4", workflow)
         self.assertIn("scripts/generate_homebrew_formula.py", workflow)
         self.assertIn("scripts/smoke_homebrew_formula.py", workflow)
@@ -43,6 +45,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--output dist/codex-obsidian-sync.rb", workflow)
         self.assertIn("ruby -c dist/codex-obsidian-sync.rb", workflow)
         self.assertIn('gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --prerelease', workflow)
+        self.assertIn("touch dist/release-created", workflow)
         self.assertIn("--formula dist/codex-obsidian-sync.rb", workflow)
         self.assertIn("--expected-version \"${GITHUB_REF_NAME}\"", workflow)
         self.assertIn("--output dist/homebrew-smoke-summary.json", workflow)
@@ -57,6 +60,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--download-dir \"/tmp/codex-obsidian-sync-published-release-${GITHUB_REF_NAME}\"", workflow)
         self.assertIn("--output dist/published-release-audit.json", workflow)
         self.assertIn('gh release upload "${GITHUB_REF_NAME}" dist/published-release-audit.json --clobber', workflow)
+        self.assertIn("touch dist/release-complete", workflow)
+        self.assertIn("if: failure()", workflow)
+        self.assertIn("[[ -f dist/release-created && ! -f dist/release-complete ]]", workflow)
+        self.assertIn('gh release delete "${GITHUB_REF_NAME}" --yes || true', workflow)
 
 
 if __name__ == "__main__":
