@@ -250,6 +250,9 @@ python3 scripts/audit_cutover_readiness.py \
 pre-cutover LaunchAgent binary까지 고정해서 확인하려면 현재 plist의 실제 `ProgramArguments[0]`를
 `--expected-current-program-arg0`에 넘긴다.
 
+서비스 전환 시에는 stop/start 전후 증거를 파일로 남긴 뒤 `scripts/audit_service_cutover.py`로
+Python service unload와 Rust service load를 판정한다. 이 스크립트는 LaunchAgent를 변경하지 않는다.
+
 Rust LaunchAgent cutover 직후에는 아래 checkpoint를 기록한다.
 
 ```bash
