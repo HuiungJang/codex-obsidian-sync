@@ -43,6 +43,13 @@ codex-obsidian-sync status
 
 릴리스 artifact는 architecture별 tarball과 SHA-256 checksum을 함께 제공한다.
 release tag는 `Cargo.toml`의 Rust package version과 일치해야 한다.
+공개된 release asset 전체는 아래 명령으로 내려받아 checksum, formula, smoke summary를 다시 검증할 수 있다.
+
+```bash
+python3 scripts/audit_published_release.py \
+  --version "${VERSION}" \
+  --download-dir "/tmp/codex-obsidian-sync-release-${VERSION}"
+```
 
 Homebrew tap은 cutover release에서 공개한다.
 
@@ -584,6 +591,7 @@ GitHub Release:
 - installed binary는 `codex-obsidian-sync --version`으로 release version을 보고해야 한다
 - `python3 scripts/smoke_release_artifact.py --tarball <artifact>.tar.gz --checksum <artifact>.tar.gz.sha256 --expected-version <version>`이 통과해야 한다
 - `python3 scripts/audit_release_evidence.py --version <tag> --release-dir dist --homebrew-formula dist/codex-obsidian-sync.rb`가 통과해야 한다
+- `python3 scripts/audit_published_release.py --version <tag> --download-dir /tmp/codex-obsidian-sync-release-<tag>`가 통과해야 한다
 
 Homebrew cutover:
 

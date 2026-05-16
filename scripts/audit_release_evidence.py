@@ -46,7 +46,27 @@ def main() -> int:
     repository = validate_repository(args.repository)
     release_dir = args.release_dir.expanduser().resolve()
     formula_path = (args.homebrew_formula or release_dir / f"{FORMULA_NAME}.rb").expanduser().resolve()
+    result = audit_release_evidence(
+        release_dir=release_dir,
+        formula_path=formula_path,
+        version=version,
+        repository=repository,
+    )
 
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        write_json(args.output, result)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0 if result["ok"] else 1
+
+
+def audit_release_evidence(
+    *,
+    release_dir: Path,
+    formula_path: Path,
+    version: str,
+    repository: str,
+) -> dict[str, object]:
     release_checks = audit_release_dir(release_dir)
     checksums = {
         release_check["details"]["target"]: release_check["details"]["checksum"]
@@ -59,13 +79,7 @@ def main() -> int:
         *audit_release_smoke_summaries(release_dir, version),
         audit_homebrew_smoke_summary(release_dir, formula_path, version),
     ]
-    result = build_result(version=version, repository=repository, checks=checks)
-
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        write_json(args.output, result)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
-    return 0 if result["ok"] else 1
+    return build_result(version=version, repository=repository, checks=checks)
 
 
 if __name__ == "__main__":
