@@ -725,6 +725,7 @@ def audit_launchagent(
         details["launchd_loaded"] = status.get("launchd_loaded")
         details["last_error"] = status.get("last_error")
         details["status_plist_path"] = status.get("plist_path")
+        details["status_config_path"] = status.get("config_path")
         validate_status_flag(
             status,
             "configured",
@@ -765,6 +766,9 @@ def audit_launchagent(
             reasons.append("LaunchAgent does not end with service-run")
         validate_config_argument(program_arguments, reasons)
 
+    if status is not None:
+        validate_status_config_path(status.get("config_path"), config_path, reasons)
+
     if expected_current_program_arg0 and (
         not program_arguments or program_arguments[0] != expected_current_program_arg0
     ):
@@ -778,6 +782,15 @@ def validate_status_plist_path(value: Any, reasons: list[str]) -> None:
         reasons.append("status plist_path is missing")
     elif not Path(value).is_absolute():
         reasons.append("status plist_path is not absolute")
+
+
+def validate_status_config_path(value: Any, launchagent_config_path: str | None, reasons: list[str]) -> None:
+    if not isinstance(value, str) or not value:
+        reasons.append("status config_path is missing")
+    elif not Path(value).is_absolute():
+        reasons.append("status config_path is not absolute")
+    elif launchagent_config_path and value != launchagent_config_path:
+        reasons.append("status config_path does not match LaunchAgent --config path")
 
 
 def validated_program_arguments(value: Any, reasons: list[str]) -> list[str]:

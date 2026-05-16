@@ -1382,12 +1382,60 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_status_config_path_is_relative(self) -> None:
+        result = audit_cutover_readiness.audit_launchagent(
+            status=launchagent_status(config_path="relative-config.toml"),
+            plist=launchagent_plist(),
+            expected_current_program_arg0="/tmp/codex-obsidian-sync",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "status config_path is not absolute",
+            result["no_go_reasons"],
+        )
+
+    def test_fails_when_status_config_path_differs_from_launchagent_config(self) -> None:
+        result = audit_cutover_readiness.audit_launchagent(
+            status=launchagent_status(config_path="/tmp/other-config.toml"),
+            plist=launchagent_plist(config_path="/tmp/config.toml"),
+            expected_current_program_arg0="/tmp/codex-obsidian-sync",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "status config_path does not match LaunchAgent --config path",
+            result["no_go_reasons"],
+        )
+
     def assertCheckOk(self, report: dict[str, object], name: str) -> None:
         checks = report["checks"]
         self.assertIsInstance(checks, list)
         matches = [item for item in checks if item["name"] == name]
         self.assertEqual(len(matches), 1)
         self.assertTrue(matches[0]["ok"], matches[0]["no_go_reasons"])
+
+
+def launchagent_status(*, config_path: str = "/tmp/config.toml") -> dict[str, object]:
+    return {
+        "configured": True,
+        "launchd_label": "com.codex.obsidian-sync",
+        "launchd_loaded": True,
+        "plist_path": "/tmp/com.codex.obsidian-sync.plist",
+        "config_path": config_path,
+        "last_error": "none",
+    }
+
+
+def launchagent_plist(
+    *,
+    program_arg0: str = "/tmp/codex-obsidian-sync",
+    config_path: str = "/tmp/config.toml",
+) -> dict[str, object]:
+    return {
+        "Label": "com.codex.obsidian-sync",
+        "ProgramArguments": [program_arg0, "--config", config_path, "service-run"],
+    }
 
 
 def write_release_artifacts(release_dir: Path) -> dict[str, str]:
@@ -1609,7 +1657,13 @@ def write_homebrew_smoke_summary(
     )
 
 
-def write_status(path: Path, plist_path: Path, *, label: str = "com.codex.obsidian-sync") -> None:
+def write_status(
+    path: Path,
+    plist_path: Path,
+    *,
+    label: str = "com.codex.obsidian-sync",
+    config_path: str = "/tmp/config.toml",
+) -> None:
     path.write_text(
         json.dumps(
             {
@@ -1617,6 +1671,7 @@ def write_status(path: Path, plist_path: Path, *, label: str = "com.codex.obsidi
                 "launchd_label": label,
                 "launchd_loaded": True,
                 "plist_path": str(plist_path),
+                "config_path": config_path,
                 "last_error": "none",
                 "last_summary": {"processed": 12, "skipped_invalid": 0},
             }
