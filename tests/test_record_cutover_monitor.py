@@ -22,7 +22,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             note_path.write_text("fresh note\n", encoding="utf-8")
             write_status(status_path, skipped_invalid=0)
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -54,6 +54,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(record["checkpoint"], "+5m")
         self.assertEqual(record["status_launchd_label"], "com.codex.obsidian-sync")
         self.assertEqual(record["plist_label"], "com.codex.obsidian-sync")
+        self.assertTrue(record["launchctl_label_seen"])
         self.assertEqual(
             record["program_arguments"],
             [expected_binary, "--config", "/tmp/config.toml", "service-run"],
@@ -74,7 +75,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0)
             write_plist(plist_path, expected_binary, include_config=False)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -115,7 +116,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0)
             write_plist(plist_path, expected_binary, config_path="relative-config.toml")
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -153,7 +154,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0)
             write_plist(plist_path, expected_binary, extra_before_service_run="--unexpected")
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -194,7 +195,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=1)
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
             (root / "plus5m.json").write_text(
                 json.dumps({"checkpoint": "+5m", "skipped_invalid": 0}) + "\n",
                 encoding="utf-8",
@@ -240,7 +241,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
                 last_success="2026-05-16T00:05:00+00:00",
             )
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
             (root / "plus5m.json").write_text(
                 json.dumps(
                     {
@@ -289,7 +290,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0, last_success="never run")
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -327,7 +328,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid="1")
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -373,7 +374,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
                 last_success="2026-05-16T01:00:00+00:00",
             )
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
             (root / "plus5m.json").write_text(
                 json.dumps(
                     {
@@ -432,7 +433,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0, label="com.codex.obsidian-sync.other")
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -470,7 +471,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0, launchd_loaded="true")
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -539,6 +540,46 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(record["launchctl_loaded"])
         self.assertIn("launchctl print did not return a loaded service", record["no_go_reasons"])
 
+    def test_fails_when_loaded_launchctl_output_lacks_expected_label(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0)
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text(launchctl_loaded_text("com.codex.obsidian-sync.other"), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertTrue(record["launchctl_loaded"])
+        self.assertFalse(record["launchctl_label_seen"])
+        self.assertIn("launchctl print did not include expected label", record["no_go_reasons"])
+
     def test_fails_when_plist_label_is_unexpected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
             root = Path(temp_dir)
@@ -548,7 +589,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0)
             write_plist(plist_path, expected_binary, label="com.codex.obsidian-sync.other")
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -616,7 +657,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             write_status(target, skipped_invalid=0)
             status_path.symlink_to(target)
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -652,7 +693,7 @@ class RecordCutoverMonitorTests(unittest.TestCase):
             expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
             write_status(status_path, skipped_invalid=0)
             write_plist(plist_path, expected_binary)
-            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
             target = root / "previous-target.json"
             target.write_text(json.dumps({"checkpoint": "+5m", "skipped_invalid": 0}) + "\n", encoding="utf-8")
             (root / "plus5m.json").symlink_to(target)
@@ -747,6 +788,10 @@ def write_plist(
             sort_keys=False,
         )
     )
+
+
+def launchctl_loaded_text(label: str = "com.codex.obsidian-sync") -> str:
+    return f"gui/501/{label} = {{\n\tstate = running\n}}\n"
 
 
 if __name__ == "__main__":

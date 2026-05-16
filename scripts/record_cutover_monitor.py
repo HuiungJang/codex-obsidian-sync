@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -224,6 +225,9 @@ def build_record(
     launchctl_loaded = looks_loaded(launchctl)
     if not allow_unloaded and not launchctl_loaded:
         no_go_reasons.append("launchctl print did not return a loaded service")
+    launchctl_label_seen = launchctl_contains_label(launchctl, expected_label)
+    if launchctl_loaded and not launchctl_label_seen:
+        no_go_reasons.append("launchctl print did not include expected label")
     if status.get("last_error") not in (None, "none", "never run"):
         no_go_reasons.append(f"last_error is {status.get('last_error')}")
     if expected_program_arg0 and (not program_arguments or program_arguments[0] != expected_program_arg0):
@@ -265,6 +269,7 @@ def build_record(
         "plist_label": plist_label,
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": launchctl_loaded,
+        "launchctl_label_seen": launchctl_label_seen,
         "plist_path": status.get("plist_path"),
         "program_arguments": program_arguments,
         "program_arg0": program_arguments[0] if program_arguments else None,
@@ -402,6 +407,11 @@ def looks_loaded(launchctl: str) -> bool:
         "no such process",
     )
     return not any(marker in lowered for marker in unloaded_markers)
+
+
+def launchctl_contains_label(launchctl: str, expected_label: str) -> bool:
+    label_pattern = re.escape(expected_label)
+    return re.search(rf"(^|[\s/]){label_pattern}(?=\s*(=|\{{|$))", launchctl) is not None
 
 
 def sanitize_checkpoint(value: str) -> str:
