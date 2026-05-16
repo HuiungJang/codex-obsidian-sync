@@ -611,6 +611,8 @@ def audit_homebrew_smoke_summary(
         for label, sequence in required_commands.items():
             if not has_successful_brew_command(commands, sequence, brew_value):
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
+        if not has_failed_brew_list_after_successful_uninstall(commands, brew_value):
+            reasons.append("Homebrew smoke did not record failed brew list after uninstall")
         required_binary_commands = {
             "version": ("--version",),
         }
@@ -1056,6 +1058,29 @@ def successful_brew_prefix(commands: list[Any], expected_brew: Any = None) -> st
             prefix = str(command.get("stdout") or "").strip()
             return prefix or None
     return None
+
+
+def has_failed_brew_list_after_successful_uninstall(commands: list[Any], expected_brew: Any = None) -> bool:
+    saw_successful_uninstall = False
+    for command in commands:
+        if not isinstance(command, dict):
+            continue
+        command_value = command.get("command")
+        if not isinstance(command_value, list):
+            continue
+        parts = [str(part) for part in command_value]
+        if not parts or not command_uses_brew(parts[0], expected_brew):
+            continue
+        if command.get("returncode") == 0 and parts[1:] == ["uninstall", "--formula", FORMULA_NAME]:
+            saw_successful_uninstall = True
+            continue
+        if (
+            saw_successful_uninstall
+            and command.get("returncode") != 0
+            and parts[1:] == ["list", "--formula", FORMULA_NAME]
+        ):
+            return True
+    return False
 
 
 def has_successful_version_command(commands: list[Any], expected_output: str, expected_binary: Any) -> bool:
