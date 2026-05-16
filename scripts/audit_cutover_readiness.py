@@ -280,9 +280,12 @@ def validate_tarball_shape(tarball: Path) -> None:
             if not (member.isfile() or member.isdir()):
                 raise ValueError(f"unsupported tar member type: {member.name}")
             if member.isfile() and member_path.name == FORMULA_NAME:
-                binary_members.append(member.name)
+                binary_members.append(member)
         if len(binary_members) != 1:
             raise ValueError(f"expected exactly one {FORMULA_NAME} binary in tarball, found {len(binary_members)}")
+        binary_member = binary_members[0]
+        if binary_member.mode & 0o111 == 0:
+            raise ValueError(f"release tarball binary is not executable: {binary_member.name}")
 
 
 def audit_homebrew_formula(

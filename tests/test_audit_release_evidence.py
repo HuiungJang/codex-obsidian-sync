@@ -1410,6 +1410,39 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_tarball_binary_is_not_executable(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            rewrite_tarball_with_non_executable_binary(release_dir, "aarch64-apple-darwin", checksums)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release artifact:aarch64-apple-darwin: release tarball binary is not executable: "
+            "codex-obsidian-sync-aarch64-apple-darwin/codex-obsidian-sync",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_dir_is_symlink(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             root = Path(temp_dir)
@@ -1637,6 +1670,22 @@ def rewrite_tarball_with_duplicate_member(release_dir: Path, target: str, checks
     with tarfile.open(package, "w:gz") as archive:
         archive.add(binary, arcname=arcname)
         archive.add(binary, arcname=arcname)
+    shutil.rmtree(scratch)
+    checksum = hashlib.sha256(package.read_bytes()).hexdigest()
+    checksums[target] = checksum
+    (release_dir / f"{package_name}.sha256").write_text(f"{checksum}  {package_name}\n", encoding="utf-8")
+
+
+def rewrite_tarball_with_non_executable_binary(release_dir: Path, target: str, checksums: dict[str, str]) -> None:
+    package_name = f"codex-obsidian-sync-{target}.tar.gz"
+    package = release_dir / package_name
+    scratch = release_dir / f"non-executable-source-{target}"
+    scratch.mkdir()
+    binary = scratch / "codex-obsidian-sync"
+    binary.write_text("#!/bin/sh\necho codex-obsidian-sync 0.1.0\n", encoding="utf-8")
+    binary.chmod(0o644)
+    with tarfile.open(package, "w:gz") as archive:
+        archive.add(binary, arcname=f"codex-obsidian-sync-{target}/codex-obsidian-sync")
     shutil.rmtree(scratch)
     checksum = hashlib.sha256(package.read_bytes()).hexdigest()
     checksums[target] = checksum
