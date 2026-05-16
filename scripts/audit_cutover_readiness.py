@@ -64,8 +64,8 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     version = normalize_version(args.version or cargo_version(repo_root / "rust" / "Cargo.toml"))
     repository = validate_repository(args.repository)
-    release_dir = args.release_dir.expanduser().resolve() if args.release_dir else None
-    formula_path = args.homebrew_formula.expanduser().resolve() if args.homebrew_formula else None
+    release_dir = args.release_dir.expanduser() if args.release_dir else None
+    formula_path = args.homebrew_formula.expanduser() if args.homebrew_formula else None
 
     release_checks = audit_release_dir(release_dir)
     checksums = {
@@ -132,7 +132,19 @@ def audit_release_dir(release_dir: Path | None) -> list[dict[str, Any]]:
             for target in TARGETS
         ]
 
-    root = release_dir.expanduser().resolve()
+    requested_root = release_dir.expanduser()
+    if requested_root.is_symlink():
+        return [
+            check(
+                f"release artifact:{target}",
+                False,
+                {"target": target, "path": str(requested_root)},
+                ["release directory is a symlink"],
+            )
+            for target in TARGETS
+        ]
+
+    root = requested_root.resolve()
     return [audit_release_target(root, target) for target in TARGETS]
 
 
@@ -162,7 +174,12 @@ def audit_release_dir_contents(release_dir: Path | None, formula_path: Path | No
     if release_dir is None:
         return check("release directory contents", False, details, ["release directory was not provided"])
 
-    root = release_dir.expanduser().resolve()
+    requested_root = release_dir.expanduser()
+    details["path"] = str(requested_root)
+    if requested_root.is_symlink():
+        return check("release directory contents", False, details, ["release directory is a symlink"])
+
+    root = requested_root.resolve()
     expected_names = expected_release_dir_file_names(formula_path, root)
     details["path"] = str(root)
     details["expected_files"] = sorted(expected_names)
@@ -253,7 +270,12 @@ def audit_homebrew_formula(
     if formula_path is None:
         return check("homebrew formula", False, details, ["Homebrew formula path was not provided"])
 
-    path = formula_path.expanduser().resolve()
+    requested_path = formula_path.expanduser()
+    details["path"] = str(requested_path)
+    if requested_path.is_symlink():
+        return check("homebrew formula", False, details, ["Homebrew formula is a symlink"])
+
+    path = requested_path.resolve()
     details["path"] = str(path)
     if not path.is_file():
         return check("homebrew formula", False, details, ["Homebrew formula is missing"])

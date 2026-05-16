@@ -376,6 +376,75 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_dir_is_symlink(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            root = Path(temp_dir)
+            release_target = root / "dist-target"
+            release_target.mkdir()
+            release_dir = root / "dist"
+            checksums = write_release_artifacts(release_target)
+            formula = write_formula(release_target, checksums)
+            write_release_smoke_summaries(release_target)
+            write_homebrew_smoke_summary(release_target, formula)
+            release_dir.symlink_to(release_target, target_is_directory=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(release_dir / formula.name),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("release artifact:aarch64-apple-darwin: release directory is a symlink", report["no_go_reasons"])
+        self.assertIn("release directory contents: release directory is a symlink", report["no_go_reasons"])
+
+    def test_fails_when_homebrew_formula_is_symlink(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            release_dir.mkdir()
+            checksums = write_release_artifacts(release_dir)
+            formula_target_dir = root / "FormulaTarget"
+            formula_link_dir = root / "FormulaLink"
+            formula_target_dir.mkdir()
+            formula_link_dir.mkdir()
+            formula_target = write_formula(formula_target_dir, checksums)
+            formula = formula_link_dir / formula_target.name
+            formula.symlink_to(formula_target)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("homebrew formula: Homebrew formula is a symlink", report["no_go_reasons"])
+
     def assertCheckOk(self, report: dict[str, object], name: str) -> None:
         checks = report["checks"]
         self.assertIsInstance(checks, list)

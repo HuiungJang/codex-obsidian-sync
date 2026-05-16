@@ -45,8 +45,8 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     version = normalize_version(args.version or cargo_version(repo_root / "rust" / "Cargo.toml"))
     repository = validate_repository(args.repository)
-    release_dir = args.release_dir.expanduser().resolve()
-    formula_path = (args.homebrew_formula or release_dir / f"{FORMULA_NAME}.rb").expanduser().resolve()
+    release_dir = args.release_dir.expanduser()
+    formula_path = (args.homebrew_formula or release_dir / f"{FORMULA_NAME}.rb").expanduser()
     result = audit_release_evidence(
         release_dir=release_dir,
         formula_path=formula_path,
