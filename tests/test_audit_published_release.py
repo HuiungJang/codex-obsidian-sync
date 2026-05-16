@@ -492,6 +492,74 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_release_asset_url_has_no_asset_id(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            asset_name = "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    {
+                        "name": asset_name,
+                        "url": f"{API_URL}/repos/{REPOSITORY}/releases/assets/",
+                        "browser_download_url": browser_download_url(asset_name),
+                        "size": len(assets[asset_name]),
+                    },
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release has malformed asset metadata: "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz download URL has an invalid asset id",
+            result["no_go_reasons"],
+        )
+
+    def test_fails_when_release_asset_url_has_nested_path(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            asset_name = "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    {
+                        "name": asset_name,
+                        "url": f"{API_URL}/repos/{REPOSITORY}/releases/assets/{asset_name}/redirect",
+                        "browser_download_url": browser_download_url(asset_name),
+                        "size": len(assets[asset_name]),
+                    },
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release has malformed asset metadata: "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz download URL has an invalid asset id",
+            result["no_go_reasons"],
+        )
+
     def test_fails_when_release_asset_browser_download_url_is_wrong(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)

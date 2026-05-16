@@ -291,6 +291,8 @@ def release_assets_by_name(
             malformed_assets.append(f"{name} is missing a download URL")
         elif not asset_url.startswith(asset_url_prefix):
             malformed_assets.append(f"{name} download URL is outside the requested repository")
+        elif not has_single_asset_url_suffix(asset_url, asset_url_prefix):
+            malformed_assets.append(f"{name} download URL has an invalid asset id")
         elif asset_url in seen_asset_urls:
             duplicate_asset_url_pairs.append(f"{seen_asset_urls[asset_url]} and {name} share {asset_url}")
         else:
@@ -318,6 +320,11 @@ def release_assets_by_name(
         duplicates = ", ".join(sorted(duplicate_asset_url_pairs))
         raise RuntimeError(f"GitHub release has duplicate asset download URLs: {duplicates}")
     return by_name
+
+
+def has_single_asset_url_suffix(asset_url: str, asset_url_prefix: str) -> bool:
+    suffix = asset_url[len(asset_url_prefix) :]
+    return bool(suffix) and "/" not in suffix
 
 
 def expected_browser_download_prefix(release: dict[str, Any], tag: str, repository: str) -> str:
