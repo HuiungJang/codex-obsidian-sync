@@ -99,6 +99,10 @@ fn quarantine_corrupt_state(path: &Path) -> Result<(), SyncError> {
         return Ok(());
     }
     let timestamp = compact_utc_timestamp(OffsetDateTime::now_utc());
+    quarantine_corrupt_state_at(path, &timestamp)
+}
+
+fn quarantine_corrupt_state_at(path: &Path, timestamp: &str) -> Result<(), SyncError> {
     let state_file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -154,4 +158,64 @@ fn validate_state(state: &SyncState) -> Result<(), SyncError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn corrupt_state_quarantine_uses_collision_suffix() {
+        let root = temp_dir("quarantine-suffix");
+        let state_path = root.join("sync-state.json");
+        let timestamp = "20260516T120000Z";
+        let first_candidate = root.join("sync-state.json.corrupt-20260516T120000Z");
+        let second_candidate = root.join("sync-state.json.corrupt-20260516T120000Z-1");
+        fs::write(&state_path, b"{").unwrap();
+        fs::write(&first_candidate, b"existing").unwrap();
+
+        quarantine_corrupt_state_at(&state_path, timestamp).unwrap();
+
+        assert!(!state_path.exists());
+        assert_eq!(fs::read(first_candidate).unwrap(), b"existing");
+        assert_eq!(fs::read(second_candidate).unwrap(), b"{");
+    }
+
+    #[test]
+    fn corrupt_state_quarantine_fails_after_all_suffixes_collide() {
+        let root = temp_dir("quarantine-collision-failure");
+        let state_path = root.join("sync-state.json");
+        let timestamp = "20260516T120001Z";
+        fs::write(&state_path, b"{").unwrap();
+        for suffix in 0..1000 {
+            let name = if suffix == 0 {
+                format!("sync-state.json.corrupt-{timestamp}")
+            } else {
+                format!("sync-state.json.corrupt-{timestamp}-{suffix}")
+            };
+            fs::write(root.join(name), b"existing").unwrap();
+        }
+
+        let error = quarantine_corrupt_state_at(&state_path, timestamp).unwrap_err();
+
+        assert_eq!(error.to_string(), "parse error");
+        assert_eq!(fs::read(state_path).unwrap(), b"{");
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "codex-obsidian-sync-rs-state-store-unit-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
 }
