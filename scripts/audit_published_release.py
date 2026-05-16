@@ -334,6 +334,8 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, ta
     elif any(not isinstance(check, dict) or check.get("ok") is not True for check in checks):
         reasons.append("uploaded release evidence summary contains failed checks")
     else:
+        if any(check.get("no_go_reasons") != [] for check in checks):
+            reasons.append("uploaded release evidence summary contains check no-go reasons")
         uploaded_names = {check.get("name") for check in checks if isinstance(check.get("name"), str)}
         missing_names = [name for name in required_evidence_check_names() if name not in uploaded_names]
         if missing_names:
