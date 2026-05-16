@@ -176,7 +176,11 @@ def allowed_asset_names() -> tuple[str, ...]:
 
 
 def prepare_download_dir(download_dir: Path) -> Path:
-    destination = download_dir.expanduser().resolve()
+    requested_path = download_dir.expanduser()
+    if requested_path.is_symlink():
+        raise RuntimeError(f"download path is a symlink: {requested_path}")
+
+    destination = requested_path.resolve()
     if destination.exists() and not destination.is_dir():
         raise RuntimeError(f"download path is not a directory: {destination}")
     if destination.exists() and any(destination.iterdir()):

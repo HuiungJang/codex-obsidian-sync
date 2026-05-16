@@ -125,6 +125,25 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("download directory is not empty", result["no_go_reasons"][0])
 
+    def test_refuses_symlinked_download_directory(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            target_dir = root / "target"
+            download_dir = root / "downloaded"
+            target_dir.mkdir()
+            download_dir.symlink_to(target_dir, target_is_directory=True)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=FakeGitHubOpener({}),
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("download path is a symlink", result["no_go_reasons"][0])
+
 
 class FakeGitHubOpener:
     def __init__(self, assets: dict[str, bytes], *, draft: bool = False, prerelease: bool = False) -> None:
