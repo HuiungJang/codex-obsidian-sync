@@ -130,6 +130,7 @@ def audit_service_cutover(
         no_go_reasons.append("pre and post ProgramArguments[0] are identical")
     if pre_config_path and post_config_path and pre_config_path != post_config_path:
         no_go_reasons.append("pre and post LaunchAgent --config paths differ")
+    no_go_reasons.extend(validate_status_plist_paths(pre_status, stopped_status, post_status))
     if expected_python_program_arg0 == expected_rust_program_arg0:
         no_go_reasons.append("expected Python and Rust binaries must differ")
     if not is_absolute_path(expected_python_program_arg0):
@@ -241,6 +242,30 @@ def validate_status_flag(
     if value is expected:
         return
     reasons.append(bool_mismatch_reason if isinstance(value, bool) else type_mismatch_reason)
+
+
+def validate_status_plist_paths(
+    pre_status: dict[str, Any],
+    stopped_status: dict[str, Any],
+    post_status: dict[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    paths = {
+        "pre": pre_status.get("plist_path"),
+        "stopped": stopped_status.get("plist_path"),
+        "post": post_status.get("plist_path"),
+    }
+    valid_paths: dict[str, str] = {}
+    for name, value in paths.items():
+        if not isinstance(value, str) or not value:
+            reasons.append(f"{name}: status plist_path is missing")
+        elif not Path(value).is_absolute():
+            reasons.append(f"{name}: status plist_path is not absolute")
+        else:
+            valid_paths[name] = value
+    if len(valid_paths) == len(paths) and len(set(valid_paths.values())) != 1:
+        reasons.append("pre, stopped, and post status plist_path values differ")
+    return reasons
 
 
 def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: str) -> dict[str, Any]:
