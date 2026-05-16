@@ -147,6 +147,68 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_tarball_checksum_does_not_match(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir, tarball_sha256="0" * 64)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke tarball checksum does not match target artifact",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_release_smoke_checksum_file_digest_does_not_match(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir, checksum_sha256="0" * 64)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke checksum file digest does not match target artifact",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_command_does_not_use_installed_binary(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -582,15 +644,21 @@ def write_release_smoke_summaries(
     installed_after: bool = False,
     version_command_stdout: str = "codex-obsidian-sync 0.1.0\n",
     command_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+    tarball_sha256: str | None = None,
+    checksum_sha256: str | None = None,
 ) -> None:
     for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
         installed_binary = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync"
+        tarball = release_dir / f"codex-obsidian-sync-{target}.tar.gz"
+        checksum = release_dir / f"codex-obsidian-sync-{target}.tar.gz.sha256"
         (release_dir / f"codex-obsidian-sync-{target}.smoke-summary.json").write_text(
             json.dumps(
                 {
                     "ok": target != failed_target,
-                    "tarball": str(release_dir / f"codex-obsidian-sync-{target}.tar.gz"),
-                    "checksum": str(release_dir / f"codex-obsidian-sync-{target}.tar.gz.sha256"),
+                    "tarball": str(tarball),
+                    "tarball_sha256": tarball_sha256 or hashlib.sha256(tarball.read_bytes()).hexdigest(),
+                    "checksum": str(checksum),
+                    "checksum_sha256": checksum_sha256 or hashlib.sha256(checksum.read_bytes()).hexdigest(),
                     "installed_binary": installed_binary,
                     "version": "codex-obsidian-sync 0.1.0",
                     "status_configured": True,

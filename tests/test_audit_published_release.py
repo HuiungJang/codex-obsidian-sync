@@ -273,12 +273,16 @@ def write_formula(release_dir: Path, checksums: dict[str, str]) -> Path:
 def write_release_smoke_summaries(release_dir: Path) -> None:
     for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
         installed_binary = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync"
+        tarball = release_dir / f"codex-obsidian-sync-{target}.tar.gz"
+        checksum = release_dir / f"codex-obsidian-sync-{target}.tar.gz.sha256"
         (release_dir / f"codex-obsidian-sync-{target}.smoke-summary.json").write_text(
             json.dumps(
                 {
                     "ok": True,
-                    "tarball": str(release_dir / f"codex-obsidian-sync-{target}.tar.gz"),
-                    "checksum": str(release_dir / f"codex-obsidian-sync-{target}.tar.gz.sha256"),
+                    "tarball": str(tarball),
+                    "tarball_sha256": hashlib.sha256(tarball.read_bytes()).hexdigest(),
+                    "checksum": str(checksum),
+                    "checksum_sha256": hashlib.sha256(checksum.read_bytes()).hexdigest(),
                     "installed_binary": installed_binary,
                     "version": "codex-obsidian-sync 0.1.0",
                     "status_configured": True,

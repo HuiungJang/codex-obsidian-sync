@@ -98,6 +98,8 @@ def run_smoke(
     if not checksum.is_file():
         raise RuntimeError(f"Missing checksum: {checksum}")
 
+    tarball_sha256 = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    checksum_sha256 = hashlib.sha256(checksum.read_bytes()).hexdigest()
     verify_checksum(tarball, checksum)
     extract_dir = work_dir / "extract"
     safe_extract_tarball(tarball, extract_dir)
@@ -179,7 +181,9 @@ def run_smoke(
     return {
         "ok": True,
         "tarball": str(tarball),
+        "tarball_sha256": tarball_sha256,
         "checksum": str(checksum),
+        "checksum_sha256": checksum_sha256,
         "work_dir": str(work_dir),
         "installed_binary": str(installed_binary),
         "uninstalled": True,

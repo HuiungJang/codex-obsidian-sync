@@ -317,10 +317,14 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
     package_name = f"{FORMULA_NAME}-{target}.tar.gz"
     checksum_name = f"{package_name}.sha256"
     path = release_dir / f"{FORMULA_NAME}-{target}.smoke-summary.json" if release_dir else None
+    tarball = release_dir / package_name if release_dir else None
+    checksum_file = release_dir / checksum_name if release_dir else None
     details: dict[str, Any] = {
         "target": target,
         "path": str(path) if path else None,
         "expected_version": f"{FORMULA_NAME} {version}",
+        "expected_tarball_sha256": file_sha256(tarball),
+        "expected_checksum_sha256": file_sha256(checksum_file),
     }
     reasons: list[str] = []
     if path is None:
@@ -337,6 +341,8 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         {
             "ok": summary.get("ok"),
             "version": summary.get("version"),
+            "tarball_sha256": summary.get("tarball_sha256"),
+            "checksum_sha256": summary.get("checksum_sha256"),
             "installed_binary": installed_binary,
             "status_configured": summary.get("status_configured"),
             "status_json_parsed": summary.get("status_json_parsed"),
@@ -357,6 +363,10 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         reasons.append("release smoke tarball does not match target artifact")
     if summary_path_name(summary.get("checksum")) != checksum_name:
         reasons.append("release smoke checksum does not match target artifact")
+    if summary.get("tarball_sha256") != details["expected_tarball_sha256"]:
+        reasons.append("release smoke tarball checksum does not match target artifact")
+    if summary.get("checksum_sha256") != details["expected_checksum_sha256"]:
+        reasons.append("release smoke checksum file digest does not match target artifact")
     for field in ("status_configured", "status_json_parsed", "dry_run", "vault_unchanged"):
         if summary.get(field) is not True:
             reasons.append(f"release smoke {field} is not true")
@@ -793,8 +803,12 @@ def same_path(left: Path, right: Path) -> bool:
 
 
 def formula_sha256(path: Path) -> str | None:
+    return file_sha256(path)
+
+
+def file_sha256(path: Path | None) -> str | None:
     try:
-        if not path.is_file():
+        if path is None or not path.is_file():
             return None
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
