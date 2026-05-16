@@ -260,6 +260,11 @@ python3 scripts/record_cutover_monitor.py --checkpoint +24h --expected-program-a
 ```
 
 각 record는 `/tmp/codex-obsidian-sync-cutover-monitor` 아래에 남는다. `ok=false`이면 `no_go_reasons`를 먼저 확인한다.
+네 checkpoint가 모두 끝난 뒤에는 전체 record set을 감사한다.
+
+```bash
+python3 scripts/audit_cutover_monitor.py --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+```
 
 ### `service-run`
 
