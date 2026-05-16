@@ -315,11 +315,30 @@ def audit_homebrew_formula(
     return check("homebrew formula", not reasons, details, reasons)
 
 
-def audit_release_smoke_summaries(release_dir: Path | None, version: str) -> list[dict[str, Any]]:
-    return [audit_release_smoke_summary(release_dir, target, version) for target in TARGETS]
+def audit_release_smoke_summaries(
+    release_dir: Path | None,
+    version: str,
+    *,
+    strict_summary_paths: bool = True,
+) -> list[dict[str, Any]]:
+    return [
+        audit_release_smoke_summary(
+            release_dir,
+            target,
+            version,
+            strict_summary_paths=strict_summary_paths,
+        )
+        for target in TARGETS
+    ]
 
 
-def audit_release_smoke_summary(release_dir: Path | None, target: str, version: str) -> dict[str, Any]:
+def audit_release_smoke_summary(
+    release_dir: Path | None,
+    target: str,
+    version: str,
+    *,
+    strict_summary_paths: bool = True,
+) -> dict[str, Any]:
     package_name = f"{FORMULA_NAME}-{target}.tar.gz"
     checksum_name = f"{package_name}.sha256"
     path = release_dir / f"{FORMULA_NAME}-{target}.smoke-summary.json" if release_dir else None
@@ -372,10 +391,14 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         reasons.append("release smoke tarball does not match target artifact")
     if not summary_path_is_absolute(summary.get("tarball")):
         reasons.append("release smoke tarball path is not absolute")
+    elif strict_summary_paths and not summary_path_matches(summary.get("tarball"), tarball):
+        reasons.append("release smoke tarball path does not match target artifact")
     if summary_path_name(summary.get("checksum")) != checksum_name:
         reasons.append("release smoke checksum does not match target artifact")
     if not summary_path_is_absolute(summary.get("checksum")):
         reasons.append("release smoke checksum path is not absolute")
+    elif strict_summary_paths and not summary_path_matches(summary.get("checksum"), checksum_file):
+        reasons.append("release smoke checksum path does not match target artifact")
     if summary.get("tarball_sha256") != details["expected_tarball_sha256"]:
         reasons.append("release smoke tarball checksum does not match target artifact")
     if summary.get("checksum_sha256") != details["expected_checksum_sha256"]:
@@ -417,6 +440,8 @@ def audit_homebrew_smoke_summary(
     release_dir: Path | None,
     formula_path: Path | None,
     version: str,
+    *,
+    strict_summary_paths: bool = True,
 ) -> dict[str, Any]:
     path = release_dir / "homebrew-smoke-summary.json" if release_dir else None
     details: dict[str, Any] = {
@@ -470,6 +495,8 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke formula does not match generated formula")
     if not summary_path_is_absolute(formula_value):
         reasons.append("Homebrew smoke formula path is not absolute")
+    elif strict_summary_paths and not summary_path_matches(formula_value, formula_path):
+        reasons.append("Homebrew smoke formula path does not match generated formula")
     if summary.get("formula_sha256") != expected_formula_sha256:
         reasons.append("Homebrew smoke formula checksum does not match generated formula")
     if summary.get("installed_after") is not False:
@@ -747,6 +774,15 @@ def summary_path_name(value: Any) -> str | None:
 
 def summary_path_is_absolute(value: Any) -> bool:
     return isinstance(value, str) and bool(value) and Path(value).is_absolute()
+
+
+def summary_path_matches(value: Any, expected: Path | None) -> bool:
+    if not isinstance(value, str) or expected is None:
+        return False
+    try:
+        return Path(value).expanduser().resolve() == expected.expanduser().resolve()
+    except OSError:
+        return False
 
 
 def positive_int(value: Any) -> bool:

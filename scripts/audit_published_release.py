@@ -125,6 +125,7 @@ def audit_published_release(
             formula_path=destination / f"{FORMULA_NAME}.rb",
             version=version,
             repository=repository,
+            strict_summary_paths=False,
         )
         no_go_reasons.extend(f"local release evidence: {reason}" for reason in local_evidence_audit["no_go_reasons"])
 

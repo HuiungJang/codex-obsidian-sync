@@ -67,6 +67,7 @@ def audit_release_evidence(
     formula_path: Path,
     version: str,
     repository: str,
+    strict_summary_paths: bool = True,
 ) -> dict[str, object]:
     release_checks = audit_release_dir(release_dir)
     checksums = {
@@ -78,8 +79,13 @@ def audit_release_evidence(
         *release_checks,
         audit_release_dir_contents(release_dir, formula_path),
         audit_homebrew_formula(formula_path, version, repository, checksums),
-        *audit_release_smoke_summaries(release_dir, version),
-        audit_homebrew_smoke_summary(release_dir, formula_path, version),
+        *audit_release_smoke_summaries(release_dir, version, strict_summary_paths=strict_summary_paths),
+        audit_homebrew_smoke_summary(
+            release_dir,
+            formula_path,
+            version,
+            strict_summary_paths=strict_summary_paths,
+        ),
     ]
     return build_result(version=version, repository=repository, checks=checks)
 

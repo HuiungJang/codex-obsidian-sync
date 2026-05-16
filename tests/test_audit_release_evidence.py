@@ -214,6 +214,47 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_tarball_path_points_elsewhere(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            release_dir.mkdir()
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            original = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            copied = root / "other" / original.name
+            copied.parent.mkdir()
+            shutil.copy2(original, copied)
+            summary_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["tarball"] = str(copied)
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke tarball path does not match target artifact",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_checksum_file_digest_does_not_match(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -277,6 +318,47 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "release smoke summary:aarch64-apple-darwin: release smoke checksum path is not absolute",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_release_smoke_checksum_path_points_elsewhere(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            release_dir.mkdir()
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            original = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256"
+            copied = root / "other" / original.name
+            copied.parent.mkdir()
+            shutil.copy2(original, copied)
+            summary_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["checksum"] = str(copied)
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke checksum path does not match target artifact",
             report["no_go_reasons"],
         )
 
@@ -643,6 +725,49 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "homebrew smoke summary: Homebrew smoke formula path is not absolute",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_homebrew_smoke_formula_path_points_elsewhere(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            release_dir.mkdir()
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            formula_copy = root / "other" / formula.name
+            formula_copy.parent.mkdir()
+            shutil.copy2(formula, formula_copy)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "homebrew-smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["formula"] = str(formula_copy)
+            for command in summary["commands"]:
+                if command["command"][:3] == ["brew", "install", "--formula"]:
+                    command["command"][3] = str(formula_copy)
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke formula path does not match generated formula",
             report["no_go_reasons"],
         )
 
