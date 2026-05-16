@@ -138,6 +138,8 @@ def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     }
     if not name:
         reasons.append("backup file entry name is missing")
+    if required and not expected_exists:
+        reasons.append(f"required backup file exists flag is not true: {name}")
     if not is_relative_to(resolved_path, root):
         reasons.append(f"backup file path is outside backup directory: {name}")
         return {**details, "no_go_reasons": reasons}
