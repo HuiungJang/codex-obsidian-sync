@@ -424,13 +424,15 @@ def audit_release_smoke_summary(
     else:
         required_binary_commands = {
             "version": ("--version",),
-            "status": ("status", "--json"),
             "inspect": ("inspect-recent",),
-            "sync": ("sync-once", "--dry-run-output"),
         }
         for label, sequence in required_binary_commands.items():
             if not has_successful_installed_binary_command(commands, sequence, installed_binary):
                 reasons.append(f"release smoke did not record successful installed binary {label}")
+        if not has_successful_configured_status_command(commands, installed_binary):
+            reasons.append("release smoke did not record successful installed binary status with --config")
+        if not has_successful_configured_sync_command(commands, installed_binary):
+            reasons.append("release smoke did not record successful installed binary sync with --config")
         if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}", installed_binary):
             reasons.append("release smoke did not record expected installed binary version output")
 
@@ -525,12 +527,14 @@ def audit_homebrew_smoke_summary(
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
         required_binary_commands = {
             "version": ("--version",),
-            "status": ("status", "--json"),
-            "sync": ("sync-once", "--dry-run-output"),
         }
         for label, sequence in required_binary_commands.items():
             if not has_successful_installed_binary_command(commands, sequence, installed_binary):
                 reasons.append(f"Homebrew smoke did not record successful installed binary {label}")
+        if not has_successful_configured_status_command(commands, installed_binary):
+            reasons.append("Homebrew smoke did not record successful installed binary status with --config")
+        if not has_successful_configured_sync_command(commands, installed_binary):
+            reasons.append("Homebrew smoke did not record successful installed binary sync with --config")
         if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}", installed_binary):
             reasons.append("Homebrew smoke did not record expected installed binary version output")
 
@@ -922,6 +926,45 @@ def has_successful_installed_binary_command(
         if command_uses_expected_binary(parts[0], expected_binary) and command_has_sequence(parts, sequence):
             return True
     return False
+
+
+def has_successful_configured_status_command(commands: list[Any], expected_binary: Any) -> bool:
+    for parts in successful_expected_binary_commands(commands, expected_binary):
+        if (
+            len(parts) == 5
+            and parts[1] == "--config"
+            and Path(parts[2]).is_absolute()
+            and parts[3:] == ["status", "--json"]
+        ):
+            return True
+    return False
+
+
+def has_successful_configured_sync_command(commands: list[Any], expected_binary: Any) -> bool:
+    for parts in successful_expected_binary_commands(commands, expected_binary):
+        if (
+            len(parts) == 6
+            and parts[1] == "--config"
+            and Path(parts[2]).is_absolute()
+            and parts[3:5] == ["sync-once", "--dry-run-output"]
+            and Path(parts[5]).is_absolute()
+        ):
+            return True
+    return False
+
+
+def successful_expected_binary_commands(commands: list[Any], expected_binary: Any) -> list[list[str]]:
+    matches: list[list[str]] = []
+    for command in commands:
+        if not isinstance(command, dict) or command.get("returncode") != 0:
+            continue
+        command_value = command.get("command")
+        if not isinstance(command_value, list) or not command_value:
+            continue
+        parts = [str(part) for part in command_value]
+        if command_uses_expected_binary(parts[0], expected_binary):
+            matches.append(parts)
+    return matches
 
 
 def command_uses_expected_binary(command_arg0: str, expected_binary: Any) -> bool:
