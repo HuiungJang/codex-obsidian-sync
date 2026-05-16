@@ -26,6 +26,7 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             source_dir = root / "assets"
             download_dir = root / "downloaded"
             assets = write_release_asset_set(source_dir)
+            assets["published-release-audit.json"] = b'{"ok": true}\n'
             opener = FakeGitHubOpener(assets)
 
             result = audit_published_release.audit_published_release(
@@ -39,6 +40,7 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertTrue(result["ok"], result["no_go_reasons"])
         self.assertEqual(result["tag"], "v0.1.0")
         self.assertEqual(result["missing_assets"], [])
+        self.assertEqual(result["extra_assets"], [])
         self.assertTrue(result["local_evidence_audit"]["ok"])
         self.assertTrue(result["uploaded_evidence_summary"]["ok"])
         self.assertEqual(len(result["downloaded_assets"]), len(audit_published_release.required_asset_names()))
@@ -83,6 +85,27 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("GitHub release is still a draft", result["no_go_reasons"])
         self.assertIn("GitHub release is marked as a prerelease", result["no_go_reasons"])
+
+    def test_fails_when_release_contains_unexpected_asset(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            assets["debug.log"] = b"unexpected\n"
+            opener = FakeGitHubOpener(assets)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["extra_assets"], ["debug.log"])
+        self.assertIn("unexpected release asset: debug.log", result["no_go_reasons"])
 
     def test_refuses_non_empty_download_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:

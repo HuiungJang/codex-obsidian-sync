@@ -22,6 +22,7 @@ from audit_release_evidence import audit_release_evidence
 
 GITHUB_API_URL = "https://api.github.com"
 RELEASE_EVIDENCE_SUMMARY = "release-evidence-summary.json"
+PUBLISHED_RELEASE_AUDIT = "published-release-audit.json"
 UrlOpener = Callable[[urllib.request.Request], Any]
 
 
@@ -86,6 +87,7 @@ def audit_published_release(
     no_go_reasons: list[str] = []
     release: dict[str, Any] | None = None
     downloaded_assets: list[dict[str, Any]] = []
+    extra_asset_names: list[str] = []
     local_evidence_audit: dict[str, Any] | None = None
     uploaded_evidence_summary: dict[str, Any] | None = None
 
@@ -101,6 +103,9 @@ def audit_published_release(
         no_go_reasons.extend(validate_release_metadata(release, tag))
 
         assets = release_assets_by_name(release)
+        extra_asset_names = sorted(set(assets) - set(allowed_asset_names()))
+        for asset_name in extra_asset_names:
+            no_go_reasons.append(f"unexpected release asset: {asset_name}")
         for asset_name in required_asset_names():
             asset = assets.get(asset_name)
             if asset is None:
@@ -138,6 +143,7 @@ def audit_published_release(
         "release": release_details,
         "downloaded_assets": downloaded_assets,
         "missing_assets": sorted(set(required_asset_names()) - {asset["name"] for asset in downloaded_assets}),
+        "extra_assets": extra_asset_names,
         "uploaded_evidence_summary": uploaded_evidence_summary,
         "local_evidence_audit": local_evidence_audit,
         "no_go_reasons": no_go_reasons,
@@ -163,6 +169,10 @@ def required_asset_names() -> tuple[str, ...]:
         ]
     )
     return tuple(names)
+
+
+def allowed_asset_names() -> tuple[str, ...]:
+    return (*required_asset_names(), PUBLISHED_RELEASE_AUDIT)
 
 
 def prepare_download_dir(download_dir: Path) -> Path:
