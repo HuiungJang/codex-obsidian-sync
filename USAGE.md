@@ -224,6 +224,19 @@ codex-obsidian-sync status --json
 - 마지막 에러 요약
 - 마지막 처리 건수
 
+## Cutover Monitoring
+
+Rust LaunchAgent cutover 직후에는 아래 checkpoint를 기록한다.
+
+```bash
+python3 scripts/record_cutover_monitor.py --checkpoint +5m --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+python3 scripts/record_cutover_monitor.py --checkpoint +1h --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+python3 scripts/record_cutover_monitor.py --checkpoint +4h --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+python3 scripts/record_cutover_monitor.py --checkpoint +24h --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+```
+
+각 record는 `/tmp/codex-obsidian-sync-cutover-monitor` 아래에 남는다. `ok=false`이면 `no_go_reasons`를 먼저 확인한다.
+
 ### `service-run`
 
 launchd가 내부적으로 호출하는 명령이다.
