@@ -51,6 +51,29 @@ jobs:
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
           (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
 
+      - name: Smoke release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) host_target="aarch64-apple-darwin" ;;
+            x86_64) host_target="x86_64-apple-darwin" ;;
+            *)
+              echo "Skipping smoke test on unsupported runner architecture: $(uname -m)"
+              exit 0
+              ;;
+          esac
+          if [[ "${{ matrix.target }}" != "${host_target}" ]]; then
+            echo "Skipping execution smoke for cross-compiled target ${{ matrix.target }} on ${host_target} runner."
+            exit 0
+          fi
+          version="$(cargo metadata --no-deps --format-version 1 --manifest-path rust/Cargo.toml | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          python3 scripts/smoke_release_artifact.py \
+            --tarball "dist/codex-obsidian-sync-${{ matrix.target }}.tar.gz" \
+            --checksum "dist/codex-obsidian-sync-${{ matrix.target }}.tar.gz.sha256" \
+            --expected-version "${version}" \
+            --work-dir "/tmp/codex-obsidian-sync-release-smoke-${{ matrix.target }}"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -72,6 +95,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Verify artifact checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          for checksum in dist/*.sha256; do
+            (cd dist && shasum -a 256 -c "$(basename "${checksum}")")
+          done
 
       - name: Publish release
         env:
