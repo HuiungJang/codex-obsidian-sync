@@ -315,6 +315,46 @@ Rust migration build의 기본 실행은 실제 vault를 쓰지 않는 dry-run�
 - LaunchAgent background write는 config에 `rust_service_write_enabled = true`가 있을 때만 가능하다
 - public cutover 전에는 Python/pipx 실행 경로를 rollback path로 유지한다
 
+## Python Rollback
+
+cutover window 동안에는 Python implementation을 다시 설치하고 같은 config로 LaunchAgent를 되돌릴 수 있어야 한다.
+rollback은 Rust LaunchAgent를 먼저 내린 뒤 Python command가 plist에 다시 기록되는지 확인하는 순서로 진행한다.
+
+```bash
+codex-obsidian-sync stop
+
+cd /path/to/codex-obsidian-sync
+pipx install -e . --force
+pipx ensurepath
+
+codex-obsidian-sync setup --vault "/absolute/path/to/vault" --cooldown 1m
+codex-obsidian-sync start
+codex-obsidian-sync status --json
+```
+
+plist가 Python module invocation으로 돌아왔는지 확인한다.
+
+```bash
+python3 - <<'PY'
+import plistlib
+from pathlib import Path
+
+plist = Path.home() / "Library/LaunchAgents/com.codex.obsidian-sync.plist"
+args = plistlib.loads(plist.read_bytes())["ProgramArguments"]
+print(args)
+assert "-m" in args
+assert "codex_obsidian_sync.cli" in args
+assert "service-run" in args
+PY
+```
+
+rollback 검증 기준:
+
+- `launchctl print gui/$UID/com.codex.obsidian-sync`가 성공한다
+- `codex-obsidian-sync status --json`이 JSON으로 parse된다
+- `ProgramArguments`가 Rust binary path가 아니라 Python module invocation을 가리킨다
+- rollback 직후 첫 실행 전에는 copied vault 또는 dry-run으로 note/state 차이를 확인한다
+
 ## 가장 자주 쓰는 흐름
 
 ### 최초 설정
