@@ -222,10 +222,11 @@ def build_record(
 
 
 def load_previous_records(output_dir: Path, checkpoint: str) -> list[dict[str, Any]]:
-    current_name = f"{sanitize_checkpoint(checkpoint)}.json"
+    current_name = checkpoint_record_name(checkpoint)
+    record_names = {checkpoint_record_name(value) for value in CHECKPOINTS}
     records = []
     for path in sorted(output_dir.glob("*.json")):
-        if path.name == current_name:
+        if path.name == current_name or path.name not in record_names:
             continue
         try:
             records.append(json.loads(path.read_text(encoding="utf-8")))
@@ -258,6 +259,10 @@ def parse_iso_datetime(value: Any) -> datetime | None:
 
 def sanitize_checkpoint(value: str) -> str:
     return value.replace("+", "plus").replace("/", "_").replace(":", "_")
+
+
+def checkpoint_record_name(checkpoint: str) -> str:
+    return f"{sanitize_checkpoint(checkpoint)}.json"
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:

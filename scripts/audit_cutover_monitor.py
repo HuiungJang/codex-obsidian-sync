@@ -10,7 +10,7 @@ from typing import Any
 from record_cutover_monitor import (
     MARKER,
     MARKER_CONTENT,
-    sanitize_checkpoint,
+    checkpoint_record_name,
 )
 
 
@@ -45,6 +45,7 @@ def audit_monitor_dir(*, monitor_dir: Path, expected_program_arg0: str | None = 
     no_go_reasons: list[str] = []
     records: list[dict[str, Any]] = []
     record_summaries: list[dict[str, Any]] = []
+    extra_record_names: list[str] = []
 
     if not root.is_dir():
         no_go_reasons.append(f"monitor directory is missing: {root}")
@@ -55,8 +56,12 @@ def audit_monitor_dir(*, monitor_dir: Path, expected_program_arg0: str | None = 
         elif marker.read_text(encoding="utf-8") != MARKER_CONTENT:
             no_go_reasons.append("monitor directory marker content is not managed by record_cutover_monitor.py")
 
+        extra_record_names = find_extra_record_names(root)
+        for record_name in extra_record_names:
+            no_go_reasons.append(f"unexpected monitor record: {record_name}")
+
         for checkpoint in ORDERED_CHECKPOINTS:
-            record_path = root / f"{sanitize_checkpoint(checkpoint)}.json"
+            record_path = root / checkpoint_record_name(checkpoint)
             record = read_record(record_path, checkpoint, no_go_reasons)
             if record is None:
                 continue
@@ -75,10 +80,16 @@ def audit_monitor_dir(*, monitor_dir: Path, expected_program_arg0: str | None = 
         "required_checkpoints": list(ORDERED_CHECKPOINTS),
         "present_checkpoints": [record.get("checkpoint") for record in records],
         "missing_checkpoints": missing_checkpoints,
+        "extra_records": extra_record_names,
         "expected_program_arg0": expected_program_arg0,
         "records": record_summaries,
         "no_go_reasons": no_go_reasons,
     }
+
+
+def find_extra_record_names(root: Path) -> list[str]:
+    expected_names = {checkpoint_record_name(checkpoint) for checkpoint in ORDERED_CHECKPOINTS}
+    return sorted(path.name for path in root.glob("*.json") if path.name not in expected_names)
 
 
 def read_record(path: Path, checkpoint: str, no_go_reasons: list[str]) -> dict[str, Any] | None:
