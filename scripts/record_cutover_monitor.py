@@ -106,6 +106,7 @@ def record_checkpoint(args: argparse.Namespace, output_dir: Path) -> dict[str, A
 
 def load_status(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     if args.status_json_file:
+        reject_symlinked_evidence(args.status_json_file)
         return json.loads(args.status_json_file.read_text(encoding="utf-8"))
 
     command = [args.binary]
@@ -120,6 +121,7 @@ def load_status(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
 
 def load_plist(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     plist_path = args.plist_file or args.plist
+    reject_symlinked_evidence(plist_path)
     content = plist_path.read_bytes()
     (output_dir / "latest-launchagent.plist").write_bytes(content)
     return plistlib.loads(content)
@@ -127,6 +129,7 @@ def load_plist(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
 
 def load_launchctl_print(args: argparse.Namespace, output_dir: Path) -> str:
     if args.launchctl_print_file:
+        reject_symlinked_evidence(args.launchctl_print_file)
         content = args.launchctl_print_file.read_text(encoding="utf-8")
         (output_dir / "latest-launchctl-print.txt").write_text(content, encoding="utf-8")
         return content
@@ -246,6 +249,8 @@ def load_previous_records(output_dir: Path, checkpoint: str) -> list[dict[str, A
     for path in sorted(output_dir.glob("*.json")):
         if path.name == current_name or path.name not in record_names:
             continue
+        if path.is_symlink():
+            raise RuntimeError(f"monitor record is a symlink: {path.name}")
         try:
             records.append(json.loads(path.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError):
@@ -286,6 +291,11 @@ def checkpoint_record_name(checkpoint: str) -> str:
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     path.chmod(0o600)
+
+
+def reject_symlinked_evidence(path: Path) -> None:
+    if path.expanduser().is_symlink():
+        raise RuntimeError(f"evidence file is a symlink: {path}")
 
 
 def format_command_output(command: list[str], result: subprocess.CompletedProcess[str]) -> str:

@@ -360,6 +360,83 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Refusing symlinked monitor directory marker", result.stderr)
 
+    def test_refuses_symlinked_evidence_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            target = root / "status-target.json"
+            write_status(target, skipped_invalid=0)
+            status_path.symlink_to(target)
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text("state = running\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("evidence file is a symlink", result.stderr)
+
+    def test_refuses_symlinked_previous_monitor_record(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0)
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text("state = running\n", encoding="utf-8")
+            target = root / "previous-target.json"
+            target.write_text(json.dumps({"checkpoint": "+5m", "skipped_invalid": 0}) + "\n", encoding="utf-8")
+            (root / "plus5m.json").symlink_to(target)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+1h",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("monitor record is a symlink: plus5m.json", result.stderr)
+
 
 def write_status(
     path: Path,
