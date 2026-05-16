@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -247,6 +248,69 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("backup file path is outside backup directory: sync-state.json", report["no_go_reasons"])
 
+    def test_fails_when_manifest_file_path_basename_does_not_match_entry_name(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            manifest_path = backup_dir / "backup-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for entry in manifest["files"]:
+                if entry["name"] == "status.json":
+                    entry["path"] = str(backup_dir / "sync-state.json")
+                    source = backup_dir / "sync-state.json"
+                    entry["size"] = source.stat().st_size
+                    entry["sha256"] = checksum(source)
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "backup file path basename does not match entry name: status.json",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_manifest_reuses_same_file_path_for_multiple_entries(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            manifest_path = backup_dir / "backup-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for entry in manifest["files"]:
+                if entry["name"] == "sync-state.json":
+                    entry["path"] = str(backup_dir / "status.json")
+                    source = backup_dir / "status.json"
+                    entry["size"] = source.stat().st_size
+                    entry["sha256"] = checksum(source)
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("duplicate backup file path: status.json", report["no_go_reasons"])
+
     def test_fails_when_backup_directory_is_symlink(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
             root = Path(temp_dir)
@@ -303,6 +367,10 @@ def create_backup(root: Path) -> Path:
     if result.returncode != 0:
         raise AssertionError(result.stderr)
     return backup_dir
+
+
+def checksum(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 if __name__ == "__main__":

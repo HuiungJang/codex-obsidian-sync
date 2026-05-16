@@ -87,6 +87,7 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
                 no_go_reasons.append("backup manifest files are missing")
             else:
                 seen_names: set[str] = set()
+                seen_paths: set[Path] = set()
                 for entry in file_entries:
                     if isinstance(entry, dict):
                         name = str(entry.get("name") or "")
@@ -97,6 +98,10 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
                             no_go_reasons.append(f"unexpected backup file entry: {name}")
                         result = audit_file_entry(root, entry)
                         file_results.append(result)
+                        result_path = Path(str(result["path"]))
+                        if result_path in seen_paths:
+                            no_go_reasons.append(f"duplicate backup file path: {result_path.name}")
+                        seen_paths.add(result_path)
                         no_go_reasons.extend(result["no_go_reasons"])
                     else:
                         no_go_reasons.append("backup manifest contains a non-object file entry")
@@ -138,6 +143,8 @@ def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     }
     if not name:
         reasons.append("backup file entry name is missing")
+    elif resolved_path.name != name:
+        reasons.append(f"backup file path basename does not match entry name: {name}")
     if required and not expected_exists:
         reasons.append(f"required backup file exists flag is not true: {name}")
     if not is_relative_to(resolved_path, root):
