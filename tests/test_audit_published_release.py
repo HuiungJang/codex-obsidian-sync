@@ -64,6 +64,26 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertIn("missing release asset: homebrew-smoke-summary.json", result["no_go_reasons"])
         self.assertIn("homebrew-smoke-summary.json", result["missing_assets"])
 
+    def test_fails_when_release_is_draft_or_prerelease(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            opener = FakeGitHubOpener(assets, draft=True, prerelease=True)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("GitHub release is still a draft", result["no_go_reasons"])
+        self.assertIn("GitHub release is marked as a prerelease", result["no_go_reasons"])
+
     def test_refuses_non_empty_download_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
@@ -84,8 +104,10 @@ class AuditPublishedReleaseTests(unittest.TestCase):
 
 
 class FakeGitHubOpener:
-    def __init__(self, assets: dict[str, bytes]) -> None:
+    def __init__(self, assets: dict[str, bytes], *, draft: bool = False, prerelease: bool = False) -> None:
         self.assets = assets
+        self.draft = draft
+        self.prerelease = prerelease
         self.release_url = f"{API_URL}/repos/{REPOSITORY}/releases/tags/v0.1.0"
 
     def __call__(self, request: Any) -> "FakeResponse":
@@ -102,8 +124,8 @@ class FakeGitHubOpener:
         return {
             "tag_name": "v0.1.0",
             "html_url": "https://github.example.test/HuiungJang/codex-obsidian-sync/releases/tag/v0.1.0",
-            "draft": False,
-            "prerelease": False,
+            "draft": self.draft,
+            "prerelease": self.prerelease,
             "assets": [
                 {
                     "name": name,
