@@ -347,6 +347,11 @@ def write_homebrew_smoke_summary(release_dir: Path, formula: Path) -> None:
                 "formula": str(formula.resolve()),
                 "expected_version": "0.1.0",
                 "installed_after": False,
+                "status_configured": True,
+                "status_json_parsed": True,
+                "dry_run": True,
+                "vault_unchanged": True,
+                "note_files": 1,
                 "commands": [
                     {"command": ["brew", "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
                     {"command": ["brew", "install", "--formula", str(formula.resolve())], "returncode": 0},

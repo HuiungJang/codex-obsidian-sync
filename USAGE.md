@@ -617,7 +617,7 @@ Homebrew cutover:
 - formula URL은 GitHub Release tarball을 가리켜야 한다
 - formula checksum은 published `.sha256`과 일치해야 한다
 - `python3 scripts/generate_homebrew_formula.py --version <tag> --aarch64-checksum <aarch64>.sha256 --x86-64-checksum <x86_64>.sha256 --output <tap>/Formula/codex-obsidian-sync.rb`로 formula를 생성한다
-- `python3 scripts/smoke_homebrew_formula.py --formula <tap>/Formula/codex-obsidian-sync.rb --expected-version <tag>`가 `brew install`, `codex-obsidian-sync --version`, `brew test`, `brew uninstall` smoke를 통과해야 한다
+- `python3 scripts/smoke_homebrew_formula.py --formula <tap>/Formula/codex-obsidian-sync.rb --expected-version <tag>`가 `brew install`, `codex-obsidian-sync --version`, `status --json`, `sync-once` dry-run vault 불변성, `brew test`, `brew uninstall` smoke를 통과해야 한다
 - cutover window 동안 Python/pipx rollback path를 유지한다
 
 ## 참고

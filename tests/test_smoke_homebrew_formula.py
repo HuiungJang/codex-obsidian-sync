@@ -40,6 +40,11 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report["ok"])
         self.assertFalse(report["installed_after"])
+        self.assertTrue(report["status_configured"])
+        self.assertTrue(report["status_json_parsed"])
+        self.assertTrue(report["dry_run"])
+        self.assertTrue(report["vault_unchanged"])
+        self.assertEqual(report["note_files"], 1)
         self.assertIn(f"install --formula {formula.resolve()}", log)
         self.assertIn("--prefix codex-obsidian-sync", log)
         self.assertIn("test codex-obsidian-sync", log)
@@ -123,7 +128,29 @@ log.write_text(log.read_text(encoding="utf-8") + " ".join(sys.argv[1:]) + "\\n" 
 def install_binary():
     binary = prefix / "bin" / "codex-obsidian-sync"
     binary.parent.mkdir(parents=True, exist_ok=True)
-    binary.write_text("#!/bin/sh\\necho codex-obsidian-sync {version}\\n", encoding="utf-8")
+    binary.write_text('''#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("codex-obsidian-sync {version}")
+    raise SystemExit(0)
+if len(args) == 4 and args[0] == "--config" and args[2:] == ["status", "--json"]:
+    print(json.dumps({{"configured": True}}))
+    raise SystemExit(0)
+if len(args) == 5 and args[0] == "--config" and args[2] == "sync-once" and args[3] == "--dry-run-output":
+    output = Path(args[4])
+    note = output / "Codex" / "Conversations" / "2026" / "2026-05-16-0000-homebrew-smoke.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("# Homebrew Smoke\\\\n", encoding="utf-8")
+    (output / "sync-state.json").write_text(json.dumps({{"files": {{}}}}) + "\\\\n", encoding="utf-8")
+    print(json.dumps({{"dry_run": True, "processed": 1}}))
+    raise SystemExit(0)
+print("unexpected args: " + " ".join(args), file=sys.stderr)
+raise SystemExit(2)
+''', encoding="utf-8")
     binary.chmod(0o755)
     state.write_text(str(prefix), encoding="utf-8")
 

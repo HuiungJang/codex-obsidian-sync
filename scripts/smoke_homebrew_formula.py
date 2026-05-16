@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 
 FORMULA_NAME = "codex-obsidian-sync"
+SESSION_ID = "019f5f16-0000-7000-8000-000000000301"
+TRANSCRIPT_TEXT = "Homebrew smoke transcript text should stay out of status summary state"
 
 
 def main() -> int:
@@ -64,6 +68,9 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
         if version_output != expected_output:
             raise RuntimeError(f"Unexpected Homebrew binary version: {version_output!r}, expected {expected_output!r}")
 
+        installed_binary = Path(prefix) / "bin" / FORMULA_NAME
+        runtime = Path(tempfile.mkdtemp(prefix="codex-obsidian-sync-homebrew-smoke-"))
+        smoke_details = run_installed_binary_smoke(installed_binary, runtime)
         run_checked([str(brew_path), "test", FORMULA_NAME], commands)
     finally:
         if installed_by_script:
@@ -80,6 +87,7 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
         "brew": str(brew_path),
         "expected_version": expected_version,
         "installed_after": installed_after,
+        **smoke_details,
         "commands": commands,
     }
 
@@ -88,6 +96,166 @@ def brew_formula_is_installed(brew_path: Path, commands: list[dict[str, Any]]) -
     result = run_capture([str(brew_path), "list", "--formula", FORMULA_NAME])
     commands.append(command_record(result))
     return result.returncode == 0
+
+
+def run_installed_binary_smoke(binary: Path, runtime: Path) -> dict[str, Any]:
+    private_mkdir(runtime)
+    prepare_fixture(runtime)
+    config_path = runtime / "config.toml"
+    vault = runtime / "vault"
+    dry_run_output = runtime / "dry-run-output"
+    vault_before = hash_tree(vault)
+
+    status = run_json([str(binary), "--config", str(config_path), "status", "--json"], runtime / "status")
+    summary = run_json(
+        [
+            str(binary),
+            "--config",
+            str(config_path),
+            "sync-once",
+            "--dry-run-output",
+            str(dry_run_output),
+        ],
+        runtime / "sync-once",
+    )
+
+    vault_after = hash_tree(vault)
+    if vault_before != vault_after:
+        raise RuntimeError("Homebrew binary dry-run mutated the configured vault")
+    if not summary.get("dry_run"):
+        raise RuntimeError("Homebrew binary sync-once did not report dry_run=true")
+    note_files = len(list(dry_run_output.rglob("*.md")))
+    if note_files <= 0:
+        raise RuntimeError("Homebrew binary dry-run did not produce any note files")
+    temp_state = dry_run_output / "sync-state.json"
+    if not temp_state.is_file():
+        raise RuntimeError("Homebrew binary dry-run did not produce sync-state.json")
+
+    leak_paths = [runtime / "status.stdout", runtime / "sync-once.stdout", temp_state]
+    leaked = [str(path) for path in leak_paths if TRANSCRIPT_TEXT in path.read_text(encoding="utf-8")]
+    if leaked:
+        raise RuntimeError(f"Raw transcript text leaked into Homebrew smoke artifacts: {leaked}")
+
+    return {
+        "work_dir": str(runtime),
+        "status_configured": status.get("configured"),
+        "status_json_parsed": True,
+        "dry_run": summary.get("dry_run"),
+        "processed": summary.get("processed"),
+        "vault_unchanged": vault_before == vault_after,
+        "note_files": note_files,
+        "temp_state_file": str(temp_state),
+    }
+
+
+def prepare_fixture(runtime: Path) -> None:
+    codex_home = runtime / ".codex"
+    vault = runtime / "vault"
+    state_dir = runtime / "state"
+    sessions = codex_home / "sessions" / "2026" / "05" / "16"
+    private_mkdir(codex_home)
+    private_mkdir(vault)
+    private_mkdir(state_dir)
+    private_mkdir(sessions)
+    write_jsonl(
+        codex_home / "session_index.jsonl",
+        [
+            {
+                "id": SESSION_ID,
+                "thread_name": "Homebrew Smoke",
+                "updated_at": "2026-05-16T00:00:00Z",
+            }
+        ],
+    )
+    write_jsonl(
+        sessions / f"rollout-{SESSION_ID}.jsonl",
+        [
+            {
+                "timestamp": "2026-05-16T00:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": SESSION_ID,
+                    "timestamp": "2026-05-16T00:00:00Z",
+                    "cwd": str(runtime / "project"),
+                    "originator": "codex_cli_rs",
+                },
+            },
+            {
+                "timestamp": "2026-05-16T00:01:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Homebrew smoke question"}],
+                },
+            },
+            {
+                "timestamp": "2026-05-16T00:02:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": TRANSCRIPT_TEXT}],
+                },
+            },
+        ],
+    )
+    (runtime / "config.toml").write_text(
+        "\n".join(
+            [
+                f'vault = "{vault}"',
+                f'codex_home = "{codex_home}"',
+                f'state_file = "{state_dir / "sync-state.json"}"',
+                f'lock_file = "{state_dir / "sync-state.lock"}"',
+                f'service_state_file = "{state_dir / "service-state.json"}"',
+                f'service_runner_lock_file = "{state_dir / "service-runner.lock"}"',
+                f'service_state_lock_file = "{state_dir / "service-state.lock"}"',
+                f'launchd_plist_path = "{runtime / "LaunchAgents" / "com.codex.obsidian-sync.plist"}"',
+                f'launchd_stdout_path = "{runtime / "logs" / "stdout.log"}"',
+                f'launchd_stderr_path = "{runtime / "logs" / "stderr.log"}"',
+                "interval_seconds = 60",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    private_mkdir(path.parent)
+    content = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o600)
+
+
+def run_json(command: list[str], output_base: Path) -> Any:
+    result = run_checked(command, [])
+    output_base.with_suffix(".stdout").write_text(result.stdout, encoding="utf-8")
+    output_base.with_suffix(".stderr").write_text(result.stderr, encoding="utf-8")
+    return json.loads(result.stdout)
+
+
+def hash_tree(path: Path) -> str:
+    digest = hashlib.sha256()
+    if not path.exists():
+        return digest.hexdigest()
+    for item in sorted(path.rglob("*")):
+        relative = item.relative_to(path).as_posix()
+        if item.is_dir():
+            digest.update(f"dir:{relative}\n".encode())
+        elif item.is_file() and not item.is_symlink():
+            digest.update(f"file:{relative}\n".encode())
+            digest.update(hashlib.sha256(item.read_bytes()).hexdigest().encode())
+            digest.update(b"\n")
+        else:
+            digest.update(f"other:{relative}\n".encode())
+    return digest.hexdigest()
+
+
+def private_mkdir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.chmod(0o700)
 
 
 def run_checked(command: list[str], commands: list[dict[str, Any]]) -> subprocess.CompletedProcess[str]:

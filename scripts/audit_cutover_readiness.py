@@ -329,6 +329,11 @@ def audit_homebrew_smoke_summary(
             "ok": summary.get("ok"),
             "summary_expected_version": summary.get("expected_version"),
             "installed_after": summary.get("installed_after"),
+            "status_configured": summary.get("status_configured"),
+            "status_json_parsed": summary.get("status_json_parsed"),
+            "dry_run": summary.get("dry_run"),
+            "vault_unchanged": summary.get("vault_unchanged"),
+            "note_files": summary.get("note_files"),
             "command_count": len(commands) if isinstance(commands, list) else None,
         }
     )
@@ -340,6 +345,11 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke formula does not match generated formula")
     if summary.get("installed_after") is not False:
         reasons.append("Homebrew smoke did not prove the formula was uninstalled")
+    for field in ("status_configured", "status_json_parsed", "dry_run", "vault_unchanged"):
+        if summary.get(field) is not True:
+            reasons.append(f"Homebrew smoke {field} is not true")
+    if not positive_int(summary.get("note_files")):
+        reasons.append("Homebrew smoke note_files is not positive")
     if not isinstance(commands, list):
         reasons.append("Homebrew smoke commands are missing")
     else:
