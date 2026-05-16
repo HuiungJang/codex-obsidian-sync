@@ -169,6 +169,8 @@ def build_record(
     no_go_reasons: list[str] = []
     program_arguments = validated_program_arguments(plist.get("ProgramArguments"), no_go_reasons)
     config_path = config_argument_path(program_arguments)
+    status_config_path = status.get("config_path")
+    status_plist_path = status.get("plist_path")
     status_launchd_label = status.get("launchd_label")
     plist_label = plist.get("Label")
     last_summary = status.get("last_summary") if isinstance(status.get("last_summary"), dict) else {}
@@ -239,6 +241,8 @@ def build_record(
             no_go_reasons.append("LaunchAgent does not end with service-run")
         validate_config_argument(program_arguments, no_go_reasons)
         validate_rust_program_arguments_shape(program_arguments, no_go_reasons)
+    validate_status_config_path(status_config_path, config_path, no_go_reasons)
+    validate_status_plist_path(status_plist_path, no_go_reasons)
     for field, value in summary_counters.items():
         if value is None:
             no_go_reasons.append(f"last_summary {field} is missing or not a non-negative integer")
@@ -270,7 +274,8 @@ def build_record(
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": launchctl_loaded,
         "launchctl_label_seen": launchctl_label_seen,
-        "plist_path": status.get("plist_path"),
+        "status_config_path": status_config_path,
+        "plist_path": status_plist_path,
         "program_arguments": program_arguments,
         "program_arg0": program_arguments[0] if program_arguments else None,
         "program_arguments_count": len(program_arguments),
@@ -367,6 +372,24 @@ def validate_config_argument(program_arguments: list[str], reasons: list[str]) -
 def validate_rust_program_arguments_shape(program_arguments: list[str], reasons: list[str]) -> None:
     if len(program_arguments) != 4 or program_arguments[1] != "--config" or program_arguments[3] != "service-run":
         reasons.append("Rust LaunchAgent ProgramArguments must be exactly binary, --config, config path, service-run")
+
+
+def validate_status_config_path(value: Any, launchagent_config_path: str | None, reasons: list[str]) -> None:
+    if not isinstance(value, str) or not value:
+        reasons.append("status config_path is missing")
+        return
+    if not Path(value).is_absolute():
+        reasons.append("status config_path is not absolute")
+        return
+    if launchagent_config_path and value != launchagent_config_path:
+        reasons.append("status config_path does not match LaunchAgent --config path")
+
+
+def validate_status_plist_path(value: Any, reasons: list[str]) -> None:
+    if not isinstance(value, str) or not value:
+        reasons.append("status plist_path is missing")
+    elif not Path(value).is_absolute():
+        reasons.append("status plist_path is not absolute")
 
 
 def config_argument_path(program_arguments: list[str]) -> str | None:

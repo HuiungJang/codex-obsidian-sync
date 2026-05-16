@@ -61,6 +61,8 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         )
         self.assertEqual(record["program_arg0"], expected_binary)
         self.assertEqual(record["config_path"], "/tmp/config.toml")
+        self.assertEqual(record["status_config_path"], "/tmp/config.toml")
+        self.assertEqual(record["plist_path"], "/tmp/agent.plist")
         self.assertEqual(record["service_command"], "service-run")
         self.assertEqual(record["skipped_invalid"], 0)
         self.assertEqual(record["processed"], 12)
@@ -144,6 +146,85 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(record["ok"])
         self.assertIn("LaunchAgent --config path is not absolute", record["no_go_reasons"])
+
+    def test_fails_when_status_config_path_differs_from_plist_config(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0, config_path="/tmp/other-config.toml")
+            write_plist(plist_path, expected_binary, config_path="/tmp/config.toml")
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertIn(
+            "status config_path does not match LaunchAgent --config path",
+            record["no_go_reasons"],
+        )
+
+    def test_fails_when_status_plist_path_is_relative(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0, plist_path="Library/LaunchAgents/agent.plist")
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text(launchctl_loaded_text(), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertIn("status plist_path is not absolute", record["no_go_reasons"])
 
     def test_fails_when_plist_has_extra_argument_before_service_run(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -728,6 +809,8 @@ def write_status(
     path: Path,
     *,
     skipped_invalid: object,
+    config_path: object = "/tmp/config.toml",
+    plist_path: object = "/tmp/agent.plist",
     last_success: str = "2026-05-16T00:05:00+00:00",
     label: str = "com.codex.obsidian-sync",
     launchd_loaded: object = True,
@@ -736,12 +819,12 @@ def write_status(
         json.dumps(
             {
                 "configured": True,
-                "config_path": "/tmp/config.toml",
+                "config_path": config_path,
                 "vault": "/tmp/vault",
                 "cooldown": "1m (60s)",
                 "launchd_label": label,
                 "launchd_loaded": launchd_loaded,
-                "plist_path": "/tmp/agent.plist",
+                "plist_path": plist_path,
                 "pending": "no",
                 "next_eligible_run": "ready now",
                 "last_run": "2026-05-16T00:05:00+00:00",

@@ -198,6 +198,18 @@ def validate_record(
         reasons.append(f"{expected_checkpoint}: config_path is missing")
     elif not Path(config_path).is_absolute():
         reasons.append(f"{expected_checkpoint}: config_path is not absolute")
+    status_config_path = record.get("status_config_path")
+    if not isinstance(status_config_path, str) or not status_config_path:
+        reasons.append(f"{expected_checkpoint}: status_config_path is missing")
+    elif not Path(status_config_path).is_absolute():
+        reasons.append(f"{expected_checkpoint}: status_config_path is not absolute")
+    elif config_path and status_config_path != config_path:
+        reasons.append(f"{expected_checkpoint}: status_config_path does not match LaunchAgent --config path")
+    plist_path = record.get("plist_path")
+    if not isinstance(plist_path, str) or not plist_path:
+        reasons.append(f"{expected_checkpoint}: plist_path is missing")
+    elif not Path(plist_path).is_absolute():
+        reasons.append(f"{expected_checkpoint}: plist_path is not absolute")
     if record.get("last_error") not in (None, "none", "never run"):
         reasons.append(f"{expected_checkpoint}: last_error is {record.get('last_error')}")
     if parse_iso_datetime(record.get("recorded_at")) is None:
@@ -222,12 +234,20 @@ def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
     }
     program_arg0_values = {record.get("program_arg0") for record in records if record.get("program_arg0")}
     config_path_values = {record.get("config_path") for record in records if record.get("config_path")}
+    status_config_path_values = {
+        record.get("status_config_path") for record in records if record.get("status_config_path")
+    }
+    plist_path_values = {record.get("plist_path") for record in records if record.get("plist_path")}
     if len(label_values) > 1:
         reasons.append("LaunchAgent label changed across monitor records")
     if len(program_arg0_values) > 1:
         reasons.append("ProgramArguments[0] changed across monitor records")
     if len(config_path_values) > 1:
         reasons.append("LaunchAgent --config path changed across monitor records")
+    if len(status_config_path_values) > 1:
+        reasons.append("status config_path changed across monitor records")
+    if len(plist_path_values) > 1:
+        reasons.append("status plist_path changed across monitor records")
 
     for record in records:
         checkpoint = str(record.get("checkpoint"))
@@ -267,6 +287,8 @@ def summarize_record(record: dict[str, Any], path: Path) -> dict[str, Any]:
         "program_arguments": record.get("program_arguments"),
         "program_arg0": record.get("program_arg0"),
         "config_path": record.get("config_path"),
+        "status_config_path": record.get("status_config_path"),
+        "plist_path": record.get("plist_path"),
         "last_success": record.get("last_success"),
         "last_error": record.get("last_error"),
         "skipped_invalid": record.get("skipped_invalid"),

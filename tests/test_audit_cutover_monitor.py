@@ -49,6 +49,8 @@ class AuditCutoverMonitorTests(unittest.TestCase):
             [expected_binary, "--config", "/tmp/config.toml", "service-run"],
         )
         self.assertEqual(report["records"][0]["config_path"], "/tmp/config.toml")
+        self.assertEqual(report["records"][0]["status_config_path"], "/tmp/config.toml")
+        self.assertEqual(report["records"][0]["plist_path"], "/tmp/agent.plist")
 
     def test_refuses_symlinked_output_report_path(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -278,6 +280,113 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["ok"])
         self.assertIn("LaunchAgent --config path changed across monitor records", report["no_go_reasons"])
+
+    def test_fails_when_record_status_config_path_differs_from_launchagent_config(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, status_config_paths={"+1h": "/tmp/other-config.toml"})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "+1h: status_config_path does not match LaunchAgent --config path",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_record_status_config_path_is_relative(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, status_config_paths={"+1h": "relative-config.toml"})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+1h: status_config_path is not absolute", report["no_go_reasons"])
+
+    def test_fails_when_record_plist_path_changes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, plist_paths={"+4h": "/tmp/other-agent.plist"})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("status plist_path changed across monitor records", report["no_go_reasons"])
+
+    def test_fails_when_record_plist_path_is_relative(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, plist_paths={"+1h": "Library/LaunchAgents/agent.plist"})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+1h: plist_path is not absolute", report["no_go_reasons"])
 
     def test_fails_when_record_program_arguments_count_is_not_rust_shape(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -660,6 +769,8 @@ def write_records(
     last_successes: dict[str, str] | None = None,
     counter_overrides: dict[str, dict[str, object]] | None = None,
     config_paths: dict[str, str | None] | None = None,
+    status_config_paths: dict[str, str | None] | None = None,
+    plist_paths: dict[str, str | None] | None = None,
     program_arguments_counts: dict[str, int] | None = None,
     program_arguments: dict[str, list[str]] | None = None,
     launchctl_label_seen: dict[str, bool] | None = None,
@@ -672,6 +783,8 @@ def write_records(
     last_successes = last_successes or {}
     counter_overrides = counter_overrides or {}
     config_paths = config_paths or {}
+    status_config_paths = status_config_paths or {}
+    plist_paths = plist_paths or {}
     program_arguments_counts = program_arguments_counts or {}
     program_arguments = program_arguments or {}
     launchctl_label_seen = launchctl_label_seen or {}
@@ -688,6 +801,11 @@ def write_records(
         counters = {"skipped_invalid": 0, "processed": 12, "appended": 1, "rewritten": 11}
         counters.update(counter_overrides.get(checkpoint, {}))
         config_path = config_paths.get(checkpoint, "/tmp/config.toml")
+        status_config_path = status_config_paths.get(
+            checkpoint,
+            config_path if config_path is not None else "/tmp/config.toml",
+        )
+        plist_path = plist_paths.get(checkpoint, "/tmp/agent.plist")
         record_arguments = program_arguments.get(
             checkpoint,
             [expected_binary, "--config", config_path or "/tmp/config.toml", "service-run"],
@@ -713,6 +831,10 @@ def write_records(
         }
         if config_path is not None:
             record["config_path"] = config_path
+        if status_config_path is not None:
+            record["status_config_path"] = status_config_path
+        if plist_path is not None:
+            record["plist_path"] = plist_path
         (root / filename).write_text(
             json.dumps(record) + "\n",
             encoding="utf-8",
