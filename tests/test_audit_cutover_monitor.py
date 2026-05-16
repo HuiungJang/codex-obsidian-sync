@@ -7,6 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import audit_cutover_monitor
+
 
 class AuditCutoverMonitorTests(unittest.TestCase):
     def test_reports_ready_when_all_required_checkpoints_are_ok(self) -> None:
@@ -45,6 +49,19 @@ class AuditCutoverMonitorTests(unittest.TestCase):
             [expected_binary, "--config", "/tmp/config.toml", "service-run"],
         )
         self.assertEqual(report["records"][0]["config_path"], "/tmp/config.toml")
+
+    def test_refuses_symlinked_output_report_path(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            output_target = root / "target-report.json"
+            output = root / "monitor-audit.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            with self.assertRaisesRegex(RuntimeError, "output path is a symlink"):
+                audit_cutover_monitor.resolve_output_path(output)
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
 
     def test_fails_when_required_checkpoint_is_missing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:

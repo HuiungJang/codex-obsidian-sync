@@ -45,11 +45,21 @@ def main() -> int:
         expected_label=args.expected_label,
         expected_program_arg0=args.expected_program_arg0,
     )
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        write_json(args.output, result)
+    output = resolve_output_path(args.output)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        write_json(output, result)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0 if result["ok"] else 1
+
+
+def resolve_output_path(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    output = path.expanduser()
+    if output.is_symlink():
+        raise RuntimeError(f"output path is a symlink: {output}")
+    return output
 
 
 def audit_monitor_dir(
