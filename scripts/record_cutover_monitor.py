@@ -16,6 +16,7 @@ DEFAULT_LABEL = "com.codex.obsidian-sync"
 MARKER = ".codex-obsidian-sync-cutover-monitor"
 MARKER_CONTENT = "managed by record_cutover_monitor.py\n"
 CHECKPOINTS = {"+5m", "+1h", "+4h", "+24h"}
+SUMMARY_COUNTER_FIELDS = ("processed", "appended", "rewritten", "skipped_invalid")
 
 
 def main() -> int:
@@ -168,10 +169,19 @@ def build_record(
     status_launchd_label = status.get("launchd_label")
     plist_label = plist.get("Label")
     last_summary = status.get("last_summary") if isinstance(status.get("last_summary"), dict) else {}
-    skipped_invalid = int(last_summary.get("skipped_invalid") or 0)
+    summary_counters = {
+        field: non_negative_int_value(last_summary.get(field))
+        for field in SUMMARY_COUNTER_FIELDS
+    }
+    skipped_invalid = summary_counters["skipped_invalid"]
+    previous_skipped_invalid_values = [
+        value
+        for value in (non_negative_int_value(record.get("skipped_invalid")) for record in previous_records)
+        if value is not None
+    ]
     previous_skipped_invalid = max(
-        [int(record.get("skipped_invalid") or 0) for record in previous_records],
-        default=skipped_invalid,
+        previous_skipped_invalid_values,
+        default=skipped_invalid or 0,
     )
     last_success = status.get("last_success")
     current_success = parse_iso_datetime(last_success)
@@ -203,7 +213,14 @@ def build_record(
         no_go_reasons.append("ProgramArguments[0] does not match expected binary")
     if not program_arguments or program_arguments[-1] != "service-run":
         no_go_reasons.append("LaunchAgent does not end with service-run")
-    if skipped_invalid > previous_skipped_invalid and not allow_skipped_invalid_increase:
+    for field, value in summary_counters.items():
+        if value is None:
+            no_go_reasons.append(f"last_summary {field} is missing or not a non-negative integer")
+    if (
+        skipped_invalid is not None
+        and skipped_invalid > previous_skipped_invalid
+        and not allow_skipped_invalid_increase
+    ):
         no_go_reasons.append("skipped_invalid increased from previous monitor record")
     if current_success is None:
         no_go_reasons.append("last_success is missing or invalid")
@@ -234,9 +251,9 @@ def build_record(
         "last_success": last_success,
         "last_error": status.get("last_error"),
         "skipped_invalid": skipped_invalid,
-        "processed": int(last_summary.get("processed") or 0),
-        "appended": int(last_summary.get("appended") or 0),
-        "rewritten": int(last_summary.get("rewritten") or 0),
+        "processed": summary_counters["processed"],
+        "appended": summary_counters["appended"],
+        "rewritten": summary_counters["rewritten"],
         "last_summary": last_summary,
         "notes": notes,
     }
@@ -278,6 +295,12 @@ def parse_iso_datetime(value: Any) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def non_negative_int_value(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
 
 
 def sanitize_checkpoint(value: str) -> str:
