@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_obsidian_sync_rs::config::{load_toml_config, resolve_service_paths};
 use codex_obsidian_sync_rs::error::SyncError;
+#[cfg(unix)]
+use codex_obsidian_sync_rs::lock::ProcessLock;
 use codex_obsidian_sync_rs::service_runner::{ServiceRunOptions, run_service_with_sync};
 use codex_obsidian_sync_rs::service_state::{load_service_state, mutate_service_state};
 use codex_obsidian_sync_rs::sync::SyncSummary;
@@ -105,6 +107,76 @@ fn run_service_records_failed_sync_error_without_success() {
     assert_eq!(state["last_error_type"], "WriteError");
     assert_eq!(state["last_error_summary"], "write error");
     assert!(state["last_success_at"].is_null());
+}
+
+#[test]
+fn run_service_preserves_last_success_when_later_sync_fails() {
+    let root = temp_dir("success-then-failure");
+    let config_path = write_config(&root, true);
+
+    run_service_with_sync(
+        Some(&config_path),
+        ServiceRunOptions::fast_for_tests(),
+        |_| Ok(summary(1, 0)),
+    )
+    .unwrap();
+    let previous = load_service_state(&service_state_path(&config_path));
+    let previous_success = previous["last_success_at"].as_str().unwrap().to_owned();
+
+    run_service_with_sync(
+        Some(&config_path),
+        ServiceRunOptions::fast_for_tests(),
+        |_| Err(SyncError::Write),
+    )
+    .unwrap();
+    let state = load_service_state(&service_state_path(&config_path));
+
+    assert_eq!(state["last_success_at"], previous_success);
+    assert_eq!(state["last_error_type"], "WriteError");
+    assert_eq!(state["pending"], false);
+    assert!(state["next_eligible_at"].is_string());
+}
+
+#[cfg(unix)]
+#[test]
+fn run_service_keeps_pending_trigger_when_runner_lock_is_busy() {
+    let root = temp_dir("runner-lock-pending");
+    let config_path = write_config(&root, true);
+    let config = load_toml_config(Some(&config_path)).unwrap();
+    let paths = resolve_service_paths(Some(&config_path), &config).unwrap();
+    let runner_lock = ProcessLock::try_acquire(&paths.service_runner_lock_file).unwrap();
+    let called = Cell::new(false);
+
+    let exit_code = run_service_with_sync(
+        Some(&config_path),
+        ServiceRunOptions::fast_for_tests(),
+        |_| {
+            called.set(true);
+            Ok(summary(1, 0))
+        },
+    )
+    .unwrap();
+    let pending_state = load_service_state(&paths.service_state_file);
+
+    assert_eq!(exit_code, 0);
+    assert!(!called.get());
+    assert_eq!(pending_state["pending"], true);
+
+    drop(runner_lock);
+    run_service_with_sync(
+        Some(&config_path),
+        ServiceRunOptions::fast_for_tests(),
+        |_| {
+            called.set(true);
+            Ok(summary(1, 0))
+        },
+    )
+    .unwrap();
+    let finished_state = load_service_state(&paths.service_state_file);
+
+    assert!(called.get());
+    assert_eq!(finished_state["pending"], false);
+    assert!(finished_state["last_success_at"].is_string());
 }
 
 #[test]
