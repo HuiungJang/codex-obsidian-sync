@@ -20,14 +20,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
         formula_step = workflow.index("- name: Generate Homebrew formula")
         publish_step = workflow.index("- name: Publish release")
         smoke_step = workflow.index("- name: Smoke Homebrew formula")
+        audit_step = workflow.index("- name: Audit release evidence")
         summaries_step = workflow.index("- name: Publish smoke summaries")
 
         self.assertLess(formula_step, publish_step)
         self.assertLess(publish_step, smoke_step)
+        self.assertLess(smoke_step, audit_step)
+        self.assertLess(audit_step, summaries_step)
         self.assertLess(smoke_step, summaries_step)
         self.assertIn("actions/checkout@v4", workflow)
         self.assertIn("scripts/generate_homebrew_formula.py", workflow)
         self.assertIn("scripts/smoke_homebrew_formula.py", workflow)
+        self.assertIn("scripts/audit_release_evidence.py", workflow)
         self.assertIn("--aarch64-checksum dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256", workflow)
         self.assertIn("--x86-64-checksum dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256", workflow)
         self.assertIn("--output dist/codex-obsidian-sync.rb", workflow)
@@ -36,8 +40,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--formula dist/codex-obsidian-sync.rb", workflow)
         self.assertIn("--expected-version \"${GITHUB_REF_NAME}\"", workflow)
         self.assertIn("--output dist/homebrew-smoke-summary.json", workflow)
+        self.assertIn("--output dist/release-evidence-summary.json", workflow)
         self.assertIn("dist/*.smoke-summary.json", workflow)
-        self.assertIn('gh release upload "${GITHUB_REF_NAME}" dist/*smoke-summary.json --clobber', workflow)
+        self.assertIn(
+            'gh release upload "${GITHUB_REF_NAME}" dist/*smoke-summary.json dist/release-evidence-summary.json --clobber',
+            workflow,
+        )
 
 
 if __name__ == "__main__":
