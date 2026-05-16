@@ -38,8 +38,8 @@ def main() -> int:
     parser.add_argument("--keep-work-dir", action="store_true", help="Reuse an existing managed work dir.")
     args = parser.parse_args()
 
-    tarball = args.tarball.resolve()
-    checksum = (args.checksum or Path(f"{tarball}.sha256")).resolve()
+    tarball = resolve_evidence_file(args.tarball, "Release tarball")
+    checksum = resolve_evidence_file(args.checksum or Path(f"{tarball}.sha256"), "Checksum file")
     work_dir = prepare_work_dir(args.work_dir, keep=args.keep_work_dir)
 
     result = run_smoke(
@@ -57,6 +57,9 @@ def prepare_work_dir(path: Path | None, *, keep: bool) -> Path:
     created = path is None
     if path is None:
         path = Path(tempfile.mkdtemp(prefix="codex-obsidian-sync-release-smoke-"))
+    path = path.expanduser()
+    if path.is_symlink():
+        raise RuntimeError(f"Work dir is a symlink: {path}")
     path = path.resolve()
     validate_work_dir(path)
 
@@ -93,6 +96,12 @@ def run_smoke(
     work_dir: Path,
     expected_version: str | None,
 ) -> dict[str, Any]:
+    if tarball.is_symlink():
+        raise RuntimeError(f"Release tarball is a symlink: {tarball}")
+    if checksum.is_symlink():
+        raise RuntimeError(f"Checksum file is a symlink: {checksum}")
+    if work_dir.is_symlink():
+        raise RuntimeError(f"Work dir is a symlink: {work_dir}")
     if not tarball.is_file():
         raise RuntimeError(f"Missing tarball: {tarball}")
     if not checksum.is_file():
@@ -199,6 +208,13 @@ def run_smoke(
         "temp_state_file": str(temp_state),
         "commands": commands,
     }
+
+
+def resolve_evidence_file(path: Path, label: str) -> Path:
+    expanded = path.expanduser()
+    if expanded.is_symlink():
+        raise RuntimeError(f"{label} is a symlink: {path}")
+    return expanded.resolve()
 
 
 def verify_checksum(tarball: Path, checksum: Path) -> None:

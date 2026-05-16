@@ -43,7 +43,10 @@ def main() -> int:
 
 
 def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, Any]:
-    formula = formula.expanduser().resolve()
+    formula = formula.expanduser()
+    if formula.is_symlink():
+        raise RuntimeError(f"Formula is a symlink: {formula}")
+    formula = formula.resolve()
     if not formula.is_file():
         raise RuntimeError(f"Formula is missing: {formula}")
     formula_sha256 = hashlib.sha256(formula.read_bytes()).hexdigest()

@@ -129,6 +129,34 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
         self.assertIn("Unexpected Homebrew binary version", result.stderr)
         self.assertIn("uninstall --formula codex-obsidian-sync", log)
 
+    def test_rejects_symlinked_formula(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-brew-smoke-") as temp_dir:
+            root = Path(temp_dir)
+            formula_target = root / "codex-obsidian-sync.rb"
+            formula_target.write_text("class CodexObsidianSync < Formula\nend\n", encoding="utf-8")
+            formula_link = root / "linked-codex-obsidian-sync.rb"
+            formula_link.symlink_to(formula_target)
+            brew = write_fake_brew(root, version="0.1.0")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_homebrew_formula.py",
+                    "--formula",
+                    str(formula_link),
+                    "--expected-version",
+                    "0.1.0",
+                    "--brew",
+                    str(brew),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Formula is a symlink", result.stderr)
+
 
 def write_fake_brew(root: Path, *, version: str, preinstalled: bool = False) -> Path:
     brew = root / "brew"

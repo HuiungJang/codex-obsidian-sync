@@ -112,6 +112,61 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
+    def test_rejects_symlinked_tarball(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_release_tarball(root)
+            checksum = write_checksum(tarball)
+            tarball_link = root / "linked-release.tar.gz"
+            tarball_link.symlink_to(tarball)
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = run_smoke(tarball=tarball_link, checksum=checksum, work_dir=work_dir)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Release tarball is a symlink", result.stderr)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+    def test_rejects_symlinked_checksum(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_release_tarball(root)
+            checksum = write_checksum(tarball)
+            checksum_link = root / "linked-release.tar.gz.sha256"
+            checksum_link.symlink_to(checksum)
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = run_smoke(tarball=tarball, checksum=checksum_link, work_dir=work_dir)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Checksum file is a symlink", result.stderr)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+    def test_rejects_symlinked_work_dir(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_release_tarball(root)
+            checksum = write_checksum(tarball)
+            work_target = root / "work-target"
+            work_target.mkdir()
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            remove_path(work_dir)
+            work_dir.symlink_to(work_target, target_is_directory=True)
+
+            try:
+                result = run_smoke(tarball=tarball, checksum=checksum, work_dir=work_dir)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Work dir is a symlink", result.stderr)
+            finally:
+                remove_path(work_dir)
+
 
 def write_release_tarball(root: Path) -> Path:
     source_dir = root / "source" / "codex-obsidian-sync-aarch64-apple-darwin"
@@ -131,6 +186,38 @@ def write_checksum(tarball: Path) -> Path:
     path = Path(f"{tarball}.sha256")
     path.write_text(f"{checksum}  {tarball.name}\n", encoding="utf-8")
     return path
+
+
+def remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def run_smoke(
+    *,
+    tarball: Path,
+    checksum: Path,
+    work_dir: Path,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "scripts/smoke_release_artifact.py",
+            "--tarball",
+            str(tarball),
+            "--checksum",
+            str(checksum),
+            "--expected-version",
+            "0.1.0",
+            "--work-dir",
+            str(work_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def fake_binary_script() -> str:
