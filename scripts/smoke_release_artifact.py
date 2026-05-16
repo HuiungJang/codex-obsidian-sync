@@ -112,8 +112,9 @@ def run_smoke(
     config_path = runtime / "config.toml"
     vault = runtime / "vault"
     vault_before = hash_tree(vault)
+    commands: list[dict[str, Any]] = []
 
-    version_output = run_jsonless([str(installed_binary), "--version"], work_dir / "version")
+    version_output = run_jsonless([str(installed_binary), "--version"], work_dir / "version", commands)
     version_line = version_output.stdout.strip()
     if expected_version and version_line != f"codex-obsidian-sync {expected_version}":
         raise RuntimeError(f"Unexpected version: {version_line!r}")
@@ -121,6 +122,7 @@ def run_smoke(
     status = run_json(
         [str(installed_binary), "--config", str(config_path), "status", "--json"],
         work_dir / "status",
+        commands,
     )
     inspect = run_json(
         [
@@ -132,6 +134,7 @@ def run_smoke(
             "3",
         ],
         work_dir / "inspect-recent",
+        commands,
     )
     summary = run_json(
         [
@@ -143,6 +146,7 @@ def run_smoke(
             str(dry_run_output),
         ],
         work_dir / "sync-once",
+        commands,
     )
 
     vault_after = hash_tree(vault)
@@ -189,6 +193,7 @@ def run_smoke(
         "vault_unchanged": vault_before == vault_after,
         "note_files": len(list(dry_run_output.rglob("*.md"))),
         "temp_state_file": str(temp_state),
+        "commands": commands,
     }
 
 
@@ -328,18 +333,32 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.chmod(0o600)
 
 
-def run_json(command: list[str], output_base: Path) -> Any:
-    result = run_jsonless(command, output_base)
+def run_json(command: list[str], output_base: Path, commands: list[dict[str, Any]]) -> Any:
+    result = run_jsonless(command, output_base, commands)
     return json.loads(result.stdout)
 
 
-def run_jsonless(command: list[str], output_base: Path) -> subprocess.CompletedProcess[str]:
+def run_jsonless(
+    command: list[str],
+    output_base: Path,
+    commands: list[dict[str, Any]],
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     (output_base.with_suffix(".stdout")).write_text(result.stdout, encoding="utf-8")
     (output_base.with_suffix(".stderr")).write_text(result.stderr, encoding="utf-8")
+    commands.append(command_record(result))
     if result.returncode != 0:
         raise RuntimeError(format_command_output(command, result))
     return result
+
+
+def command_record(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    return {
+        "command": list(result.args),
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
 
 
 def format_command_output(command: list[str], result: subprocess.CompletedProcess[str]) -> str:

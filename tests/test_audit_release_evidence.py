@@ -112,6 +112,40 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_version_command_output_does_not_match(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(
+                release_dir,
+                version_command_stdout="codex-obsidian-sync 0.2.0\n",
+            )
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke did not record successful installed binary version",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_homebrew_smoke_did_not_uninstall(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -303,6 +337,7 @@ def write_release_smoke_summaries(
     release_dir: Path,
     failed_target: str | None = None,
     installed_after: bool = False,
+    version_command_stdout: str = "codex-obsidian-sync 0.1.0\n",
 ) -> None:
     for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
         (release_dir / f"codex-obsidian-sync-{target}.smoke-summary.json").write_text(
@@ -321,6 +356,13 @@ def write_release_smoke_summaries(
                     "uninstalled": not installed_after,
                     "installed_after": installed_after,
                     "note_files": 1,
+                    "commands": [
+                        {
+                            "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
+                            "returncode": 0,
+                            "stdout": version_command_stdout,
+                        }
+                    ],
                 }
             )
             + "\n",

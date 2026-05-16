@@ -500,6 +500,13 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                     "uninstalled": True,
                     "installed_after": False,
                     "note_files": 1,
+                    "commands": [
+                        {
+                            "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
+                            "returncode": 0,
+                            "stdout": "codex-obsidian-sync 0.1.0\n",
+                        }
+                    ],
                 }
             )
             + "\n",

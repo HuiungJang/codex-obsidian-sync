@@ -47,6 +47,12 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
                 self.assertFalse(report["installed_after"])
                 self.assertFalse(installed_binary.exists())
                 self.assertEqual(report["version"], "codex-obsidian-sync 0.1.0")
+                version_commands = [
+                    command
+                    for command in report["commands"]
+                    if command["command"][-1:] == ["--version"]
+                ]
+                self.assertEqual(version_commands[0]["stdout"].strip(), "codex-obsidian-sync 0.1.0")
                 self.assertTrue(report["vault_unchanged"])
                 self.assertEqual(report["note_files"], 1)
                 self.assertEqual(Path(report["work_dir"]), work_dir.resolve())

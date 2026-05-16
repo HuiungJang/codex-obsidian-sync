@@ -263,6 +263,7 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
     if summary is None:
         return check(f"release smoke summary:{target}", False, details, reasons)
 
+    commands = summary.get("commands")
     details.update(
         {
             "ok": summary.get("ok"),
@@ -275,6 +276,7 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
             "installed_after": summary.get("installed_after"),
             "inspect_count": summary.get("inspect_count"),
             "note_files": summary.get("note_files"),
+            "command_count": len(commands) if isinstance(commands, list) else None,
         }
     )
     if summary.get("ok") is not True:
@@ -296,6 +298,10 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         reasons.append("release smoke inspect_count is not positive")
     if not positive_int(summary.get("note_files")):
         reasons.append("release smoke note_files is not positive")
+    if not isinstance(commands, list):
+        reasons.append("release smoke commands are missing")
+    elif not has_successful_version_command(commands, f"{FORMULA_NAME} {version}"):
+        reasons.append("release smoke did not record successful installed binary version")
 
     return check(f"release smoke summary:{target}", not reasons, details, reasons)
 
