@@ -132,6 +132,82 @@ class GenerateHomebrewFormulaTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not reference codex-obsidian-sync-aarch64-apple-darwin.tar.gz", result.stderr)
 
+    def test_rejects_symlinked_checksum_file(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            aarch64_target = root / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256"
+            aarch64 = root / "aarch64-link.sha256"
+            x86_64 = root / "codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256"
+            aarch64_target.write_text(
+                f"{'a' * 64}  codex-obsidian-sync-aarch64-apple-darwin.tar.gz\n",
+                encoding="utf-8",
+            )
+            aarch64.symlink_to(aarch64_target)
+            x86_64.write_text(
+                f"{'b' * 64}  codex-obsidian-sync-x86_64-apple-darwin.tar.gz\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/generate_homebrew_formula.py",
+                    "--version",
+                    "0.1.0",
+                    "--aarch64-checksum",
+                    str(aarch64),
+                    "--x86-64-checksum",
+                    str(x86_64),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Checksum file is a symlink", result.stderr)
+
+    def test_rejects_symlinked_output_formula(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            aarch64 = root / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256"
+            x86_64 = root / "codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256"
+            formula_target = root / "target.rb"
+            formula = root / "codex-obsidian-sync.rb"
+            aarch64.write_text(
+                f"{'a' * 64}  codex-obsidian-sync-aarch64-apple-darwin.tar.gz\n",
+                encoding="utf-8",
+            )
+            x86_64.write_text(
+                f"{'b' * 64}  codex-obsidian-sync-x86_64-apple-darwin.tar.gz\n",
+                encoding="utf-8",
+            )
+            formula_target.write_text("keep\n", encoding="utf-8")
+            formula.symlink_to(formula_target)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/generate_homebrew_formula.py",
+                    "--version",
+                    "0.1.0",
+                    "--aarch64-checksum",
+                    str(aarch64),
+                    "--x86-64-checksum",
+                    str(x86_64),
+                    "--output",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(formula_target.read_text(encoding="utf-8"), "keep\n")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Output formula path is a symlink", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

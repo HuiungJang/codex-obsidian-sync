@@ -42,8 +42,11 @@ def main() -> int:
     formula = render_formula(version=version, repository=repository, checksums=checksums)
 
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(formula, encoding="utf-8")
+        output = args.output.expanduser()
+        if output.is_symlink():
+            raise ValueError(f"Output formula path is a symlink: {output}")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(formula, encoding="utf-8")
     else:
         print(formula, end="")
     return 0
@@ -72,6 +75,9 @@ def validate_repository(value: str) -> str:
 
 
 def read_checksum(path: Path, target: str) -> str:
+    path = path.expanduser()
+    if path.is_symlink():
+        raise ValueError(f"Checksum file is a symlink: {path}")
     expected_name = f"{FORMULA_NAME}-{target}.tar.gz"
     for line in path.read_text(encoding="utf-8").splitlines():
         parts = line.strip().split()
