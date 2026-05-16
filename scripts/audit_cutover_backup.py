@@ -64,7 +64,12 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
         elif manifest_path.is_symlink():
             no_go_reasons.append("backup manifest is a symlink")
         else:
-            manifest = read_json_object(manifest_path)
+            try:
+                manifest = read_json_object(manifest_path)
+            except (OSError, json.JSONDecodeError, RuntimeError) as error:
+                no_go_reasons.append(f"backup manifest is invalid: {error}")
+
+        if manifest is not None:
             manifest_output_dir = manifest.get("output_dir")
             if isinstance(manifest_output_dir, str):
                 if Path(manifest_output_dir).expanduser().resolve() != root:

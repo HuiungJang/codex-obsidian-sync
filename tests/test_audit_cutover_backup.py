@@ -118,6 +118,54 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("unexpected backup directory entry: untracked.json", report["no_go_reasons"])
 
+    def test_fails_with_report_when_manifest_json_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            (backup_dir / "backup-manifest.json").write_text("{not json\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(reason.startswith("backup manifest is invalid:") for reason in report["no_go_reasons"])
+        )
+
+    def test_fails_with_report_when_manifest_json_is_not_object(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            (backup_dir / "backup-manifest.json").write_text("[]\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(reason.startswith("backup manifest is invalid:") for reason in report["no_go_reasons"])
+        )
+
     def test_fails_when_manifest_file_path_points_outside_backup_directory(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
             backup_dir = create_backup(Path(temp_dir))
