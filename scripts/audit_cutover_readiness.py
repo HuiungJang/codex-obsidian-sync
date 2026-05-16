@@ -500,8 +500,14 @@ def audit_release_smoke_summary(
             reasons.append("release smoke did not record successful installed binary inspect")
         if not has_successful_configured_status_command(commands, installed_binary):
             reasons.append("release smoke did not record successful installed binary status with --config")
-        if not has_successful_configured_sync_command(commands, installed_binary):
-            reasons.append("release smoke did not record successful installed binary sync with --config")
+        sync_summary = successful_configured_sync_summary(commands, installed_binary)
+        if sync_summary is None:
+            reasons.append("release smoke did not record parseable installed binary sync summary")
+        else:
+            if sync_summary.get("dry_run") is not True:
+                reasons.append("release smoke sync stdout dry_run is not true")
+            if sync_summary.get("processed") != summary.get("processed"):
+                reasons.append("release smoke processed does not match sync stdout")
         if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}", installed_binary):
             reasons.append("release smoke did not record expected installed binary version output")
 
@@ -627,8 +633,14 @@ def audit_homebrew_smoke_summary(
                 reasons.append(f"Homebrew smoke did not record successful installed binary {label}")
         if not has_successful_configured_status_command(commands, installed_binary):
             reasons.append("Homebrew smoke did not record successful installed binary status with --config")
-        if not has_successful_configured_sync_command(commands, installed_binary):
-            reasons.append("Homebrew smoke did not record successful installed binary sync with --config")
+        sync_summary = successful_configured_sync_summary(commands, installed_binary)
+        if sync_summary is None:
+            reasons.append("Homebrew smoke did not record parseable installed binary sync summary")
+        else:
+            if sync_summary.get("dry_run") is not True:
+                reasons.append("Homebrew smoke sync stdout dry_run is not true")
+            if sync_summary.get("processed") != summary.get("processed"):
+                reasons.append("Homebrew smoke processed does not match sync stdout")
         if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}", installed_binary):
             reasons.append("Homebrew smoke did not record expected installed binary version output")
 
@@ -1148,17 +1160,32 @@ def has_successful_inspect_recent_command(commands: list[Any], expected_binary: 
     return False
 
 
-def has_successful_configured_sync_command(commands: list[Any], expected_binary: Any) -> bool:
-    for parts in successful_expected_binary_commands(commands, expected_binary):
-        if (
+def successful_configured_sync_summary(commands: list[Any], expected_binary: Any) -> dict[str, Any] | None:
+    for command in commands:
+        if not isinstance(command, dict) or command.get("returncode") != 0:
+            continue
+        command_value = command.get("command")
+        if not isinstance(command_value, list) or not command_value:
+            continue
+        parts = [str(part) for part in command_value]
+        if not (
             len(parts) == 6
+            and command_uses_expected_binary(parts[0], expected_binary)
             and parts[1] == "--config"
             and Path(parts[2]).is_absolute()
             and parts[3:5] == ["sync-once", "--dry-run-output"]
             and Path(parts[5]).is_absolute()
         ):
-            return True
-    return False
+            continue
+        stdout = command.get("stdout")
+        if not isinstance(stdout, str):
+            return None
+        try:
+            value = json.loads(stdout)
+        except json.JSONDecodeError:
+            return None
+        return value if isinstance(value, dict) else None
+    return None
 
 
 def successful_expected_binary_commands(commands: list[Any], expected_binary: Any) -> list[list[str]]:

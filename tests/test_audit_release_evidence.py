@@ -197,6 +197,43 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_processed_differs_from_sync_stdout(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            for command in summary["commands"]:
+                if "sync-once" in command["command"]:
+                    command["stdout"] = json.dumps({"dry_run": True, "processed": 2}) + "\n"
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke processed does not match sync stdout",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_version_command_output_does_not_match(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -667,7 +704,7 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "release smoke summary:aarch64-apple-darwin: "
-            "release smoke did not record successful installed binary sync with --config",
+            "release smoke did not record parseable installed binary sync summary",
             report["no_go_reasons"],
         )
 
@@ -901,6 +938,43 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "homebrew smoke summary: Homebrew smoke processed is not positive",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_homebrew_smoke_processed_differs_from_sync_stdout(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "homebrew-smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            for command in summary["commands"]:
+                if "sync-once" in command["command"]:
+                    command["stdout"] = json.dumps({"dry_run": True, "processed": 2}) + "\n"
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke processed does not match sync stdout",
             report["no_go_reasons"],
         )
 
@@ -2023,6 +2097,7 @@ def write_release_smoke_summaries(
                                 "/tmp/output",
                             ],
                             "returncode": 0,
+                            "stdout": json.dumps({"dry_run": True, "processed": processed}) + "\n",
                         },
                     ],
                 }
@@ -2098,6 +2173,7 @@ def write_homebrew_smoke_summary(
                     "/tmp/output",
                 ],
                 "returncode": 0,
+                "stdout": json.dumps({"dry_run": True, "processed": processed}) + "\n",
             },
             {"command": [brew_command, "test", "codex-obsidian-sync"], "returncode": 0},
             {

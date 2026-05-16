@@ -1372,6 +1372,7 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                                 "/tmp/output",
                             ],
                             "returncode": 0,
+                            "stdout": json.dumps({"dry_run": True, "processed": 1}) + "\n",
                         },
                     ],
                 }
@@ -1433,6 +1434,7 @@ def write_homebrew_smoke_summary(release_dir: Path, formula: Path) -> None:
                             "/tmp/output",
                         ],
                         "returncode": 0,
+                        "stdout": json.dumps({"dry_run": True, "processed": 1}) + "\n",
                     },
                     {"command": ["brew", "test", "codex-obsidian-sync"], "returncode": 0},
                     {"command": ["brew", "uninstall", "--formula", "codex-obsidian-sync"], "returncode": 0},
