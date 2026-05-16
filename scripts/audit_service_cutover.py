@@ -32,24 +32,39 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="Write the cutover audit report to this path.")
     args = parser.parse_args()
 
-    result = audit_service_cutover(
-        pre_status=read_json_object(args.pre_status_json_file),
-        pre_plist=read_plist(args.pre_plist_file),
-        pre_launchctl=read_text(args.pre_launchctl_print_file),
-        stopped_status=read_json_object(args.stopped_status_json_file),
-        stopped_launchctl=read_text(args.stopped_launchctl_print_file),
-        post_status=read_json_object(args.post_status_json_file),
-        post_plist=read_plist(args.post_plist_file),
-        post_launchctl=read_text(args.post_launchctl_print_file),
-        expected_python_program_arg0=args.expected_python_program_arg0,
-        expected_rust_program_arg0=args.expected_rust_program_arg0,
-        expected_label=args.expected_label,
-    )
+    try:
+        result = audit_service_cutover(
+            pre_status=read_json_object(args.pre_status_json_file),
+            pre_plist=read_plist(args.pre_plist_file),
+            pre_launchctl=read_text(args.pre_launchctl_print_file),
+            stopped_status=read_json_object(args.stopped_status_json_file),
+            stopped_launchctl=read_text(args.stopped_launchctl_print_file),
+            post_status=read_json_object(args.post_status_json_file),
+            post_plist=read_plist(args.post_plist_file),
+            post_launchctl=read_text(args.post_launchctl_print_file),
+            expected_python_program_arg0=args.expected_python_program_arg0,
+            expected_rust_program_arg0=args.expected_rust_program_arg0,
+            expected_label=args.expected_label,
+        )
+    except (OSError, json.JSONDecodeError, plistlib.InvalidFileException, ValueError) as error:
+        result = invalid_evidence_result(args, error)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         write_json(args.output, result)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0 if result["ok"] else 1
+
+
+def invalid_evidence_result(args: argparse.Namespace, error: Exception) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "expected_label": args.expected_label,
+        "expected_python_program_arg0": args.expected_python_program_arg0,
+        "expected_rust_program_arg0": args.expected_rust_program_arg0,
+        "snapshots": {},
+        "no_go_reasons": [f"cutover evidence is invalid: {error}"],
+    }
 
 
 def audit_service_cutover(
@@ -230,7 +245,7 @@ def read_json_object(path: Path) -> dict[str, Any]:
     reject_symlinked_evidence(path)
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
-        raise RuntimeError(f"JSON file is not an object: {path}")
+        raise ValueError(f"JSON file is not an object: {path}")
     return value
 
 
@@ -238,7 +253,7 @@ def read_plist(path: Path) -> dict[str, Any]:
     reject_symlinked_evidence(path)
     value = plistlib.loads(path.read_bytes())
     if not isinstance(value, dict):
-        raise RuntimeError(f"plist file is not a dictionary: {path}")
+        raise ValueError(f"plist file is not a dictionary: {path}")
     return value
 
 

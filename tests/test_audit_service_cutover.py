@@ -176,6 +176,42 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("stopped: status launchd_label does not match expected label", report["no_go_reasons"])
 
+    def test_fails_with_report_when_status_json_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            files["post_status"].write_text("{not json\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["snapshots"], {})
+        self.assertTrue(
+            any(reason.startswith("cutover evidence is invalid:") for reason in report["no_go_reasons"])
+        )
+
+    def test_fails_with_report_when_plist_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            files["post_plist"].write_text("not a plist\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["snapshots"], {})
+        self.assertTrue(
+            any(reason.startswith("cutover evidence is invalid:") for reason in report["no_go_reasons"])
+        )
+
     def test_refuses_symlinked_evidence_file(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)
