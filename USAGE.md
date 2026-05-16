@@ -294,6 +294,27 @@ codex-obsidian-sync inspect-rollout /absolute/path/to/rollout.jsonl
 - 문제 세션 하나만 떼어 보고 싶을 때
 - title seed, project slug, message filtering 결과를 확인할 때
 
+## Migration Safety Contract
+
+Rust migration build의 기본 실행은 실제 vault를 쓰지 않는 dry-run이다.
+다음 파일과 디렉터리는 `sync-once --write` 또는 gated `service-run` 전에는 수정하지 않는다.
+
+- configured Obsidian vault
+- `.codex` source logs and `session_index.jsonl`
+- configured real `sync-state.json`
+- configured lock files
+- corrupt-state quarantine files
+
+`--dry-run-output`은 real vault, `.codex`, state directory 내부를 거부하고 기존 non-empty directory도 거부한다.
+출력 디렉터리에는 렌더링된 note와 temp `sync-state.json`이 남으므로, 삭제 전 diff 확인에 쓸 수 있다.
+
+실제 쓰기 허용 조건:
+
+- copied-vault `sync-once --write` 테스트가 통과해야 한다
+- partial note/state failure recovery 테스트가 통과해야 한다
+- LaunchAgent background write는 config에 `rust_service_write_enabled = true`가 있을 때만 가능하다
+- public cutover 전에는 Python/pipx 실행 경로를 rollback path로 유지한다
+
 ## 가장 자주 쓰는 흐름
 
 ### 최초 설정
@@ -424,6 +445,75 @@ codex-obsidian-sync start
 ```bash
 cat ~/.codex/obsidian-sync/config.toml
 ```
+
+### Rust dry-run 결과를 Python과 비교하고 싶다
+
+repo checkout에서 comparison harness를 실행한다.
+
+```bash
+cd /path/to/codex-obsidian-sync
+/opt/homebrew/bin/python3.13 scripts/compare_python_rust_sync.py --output-dir /tmp/codex-obsidian-sync-compare
+```
+
+private fixture가 있으면 local fixture path를 명시한다.
+
+```bash
+/opt/homebrew/bin/python3.13 scripts/compare_python_rust_sync.py \
+  --output-dir /tmp/codex-obsidian-sync-compare \
+  --local-fixture /tmp/codex-obsidian-sync-phase14-anon-fixture
+```
+
+확인할 파일:
+
+- `artifacts/summary.diff.json`
+- `artifacts/notes.diff`
+- `artifacts/state.diff.json`
+- `artifacts/input_hashes.json`
+
+### `skipped_invalid`가 늘어난다
+
+`inspect-recent`로 최근 후보를 본 뒤, 문제 rollout 하나를 `inspect-rollout`으로 확인한다.
+malformed rollout은 해당 rollout만 건너뛰고 전체 sync는 계속 성공해야 한다.
+
+```bash
+codex-obsidian-sync inspect-recent --limit 10
+codex-obsidian-sync inspect-rollout /absolute/path/to/rollout.jsonl
+```
+
+### stale offset이 의심된다
+
+offset은 source of truth가 아니라 성능 힌트다.
+Rust sync는 stale offset이면 full rebuild로 복구해야 하며, 이때 `skipped_invalid`가 증가하면 안 된다.
+의심될 때는 dry-run output을 새 directory에 만들고 `notes.diff`와 temp `sync-state.json`을 확인한다.
+
+```bash
+codex-obsidian-sync sync-once --dry-run-output /tmp/codex-obsidian-sync-stale-offset-check
+```
+
+## Release Checklist
+
+release tag를 만들기 전:
+
+- `cargo fmt --manifest-path rust/Cargo.toml --check`
+- `cargo test --manifest-path rust/Cargo.toml`
+- `cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings`
+- `cargo build --release --manifest-path rust/Cargo.toml`
+- signing/notarization decision 확인
+
+GitHub Release:
+
+- tag는 `v<Cargo.toml package version>` 형식이어야 한다
+- `aarch64-apple-darwin` artifact와 checksum이 있어야 한다
+- `x86_64-apple-darwin` artifact와 checksum이 있어야 한다
+- downloaded `.tar.gz`는 같은 directory의 `.sha256`으로 `shasum -a 256 -c`가 통과해야 한다
+- installed binary는 `codex-obsidian-sync --version`으로 release version을 보고해야 한다
+
+Homebrew cutover:
+
+- formula URL은 GitHub Release tarball을 가리켜야 한다
+- formula checksum은 published `.sha256`과 일치해야 한다
+- `brew install`, `codex-obsidian-sync --version`, `brew uninstall` smoke가 통과해야 한다
+- cutover window 동안 Python/pipx rollback path를 유지한다
 
 ## 참고
 
