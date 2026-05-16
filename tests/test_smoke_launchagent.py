@@ -57,6 +57,45 @@ class SmokeLaunchAgentTests(unittest.TestCase):
         self.assertIn("kickstart -k", log)
         self.assertIn("bootout", log)
 
+    def test_rejects_boolean_processed_summary(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            binary = write_fake_binary(root)
+            binary.write_text(
+                binary.read_text(encoding="utf-8").replace(
+                    '"last_summary": {"processed": 1, "rewritten": 1}',
+                    '"last_summary": {"processed": True, "rewritten": 1}',
+                ),
+                encoding="utf-8",
+            )
+            launchctl = write_fake_launchctl(root)
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-launchagent-smoke-{root.name}"
+            self.addCleanup(shutil.rmtree, work_dir, ignore_errors=True)
+            label = f"com.codex.obsidian-sync.smoke.{root.name.replace('_', '-')}"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_launchagent.py",
+                    "--binary",
+                    str(binary),
+                    "--launchctl",
+                    str(launchctl),
+                    "--work-dir",
+                    str(work_dir),
+                    "--label",
+                    label,
+                    "--timeout-seconds",
+                    "5",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("processed summary", result.stderr)
+
     def test_rejects_non_smoke_label(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-launchagent-test-") as temp_dir:
             root = Path(temp_dir)

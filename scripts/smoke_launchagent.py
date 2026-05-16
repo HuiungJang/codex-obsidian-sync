@@ -355,7 +355,7 @@ def format_command_failure(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def positive_int(value: Any) -> bool:
-    return isinstance(value, int) and value > 0
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def normalize_output(value: str | bytes | None) -> str:

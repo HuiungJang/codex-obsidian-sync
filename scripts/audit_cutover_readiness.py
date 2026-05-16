@@ -714,7 +714,7 @@ def summary_path_name(value: Any) -> str | None:
 
 
 def positive_int(value: Any) -> bool:
-    return isinstance(value, int) and value > 0
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def command_has_sequence(command: Any, sequence: tuple[str, ...]) -> bool:
