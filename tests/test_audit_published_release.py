@@ -639,6 +639,89 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_release_asset_digest_is_missing(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            asset_name = "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            asset = release_asset_metadata(assets, asset_name)
+            del asset["digest"]
+            opener = FakeGitHubOpener(assets, release_assets=[asset])
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release has malformed asset metadata: "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz is missing a sha256 digest",
+            result["no_go_reasons"],
+        )
+
+    def test_fails_when_release_asset_digest_is_not_sha256(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            asset_name = "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    release_asset_metadata(assets, asset_name, digest="md5:" + ("0" * 32)),
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release has malformed asset metadata: "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz is missing a sha256 digest",
+            result["no_go_reasons"],
+        )
+
+    def test_fails_when_release_asset_digest_does_not_match_payload(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            asset_name = "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    release_asset_metadata(assets, asset_name, digest="sha256:" + ("0" * 64)),
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "release asset digest mismatch for codex-obsidian-sync-aarch64-apple-darwin.tar.gz",
+            result["no_go_reasons"],
+        )
+
     def test_fails_when_release_asset_browser_download_url_is_wrong(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
@@ -829,6 +912,7 @@ class FakeGitHubOpener:
                 "url": f"{API_URL}/repos/{REPOSITORY}/releases/assets/{index}",
                 "browser_download_url": browser_download_url(name),
                 "state": "uploaded",
+                "digest": f"sha256:{hashlib.sha256(payload).hexdigest()}",
                 "size": len(payload),
             }
             for index, (name, payload) in enumerate(sorted(self.assets.items()), start=1)
@@ -875,6 +959,7 @@ def release_asset_metadata(
         "url": f"{API_URL}/repos/{REPOSITORY}/releases/assets/{asset_id}",
         "browser_download_url": browser_download_url(name),
         "state": "uploaded",
+        "digest": f"sha256:{hashlib.sha256(assets[name]).hexdigest()}",
         "size": len(assets[name]),
     }
     metadata.update(overrides)

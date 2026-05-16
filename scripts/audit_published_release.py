@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -289,6 +290,9 @@ def release_assets_by_name(
         asset_id = asset.get("id")
         if not is_positive_int(asset_id):
             malformed_assets.append(f"{name} is missing a positive asset id")
+        digest = asset.get("digest")
+        if not is_sha256_digest(digest):
+            malformed_assets.append(f"{name} is missing a sha256 digest")
         asset_url = asset.get("url")
         if not isinstance(asset_url, str) or not asset_url:
             malformed_assets.append(f"{name} is missing a download URL")
@@ -360,11 +364,18 @@ def download_asset(
     expected_size = asset.get("size")
     if not is_non_negative_int(expected_size):
         raise RuntimeError(f"release asset size is missing or invalid for {name}")
+    expected_digest = asset.get("digest")
+    if not is_sha256_digest(expected_digest):
+        raise RuntimeError(f"release asset digest is missing or invalid for {name}")
 
     payload = read_bytes_url(asset_url, github_token, "application/octet-stream", opener)
     size_matches = expected_size == len(payload)
     if not size_matches:
         raise RuntimeError(f"release asset size mismatch for {name}")
+    digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    digest_matches = expected_digest == digest
+    if not digest_matches:
+        raise RuntimeError(f"release asset digest mismatch for {name}")
     destination.write_bytes(payload)
     return {
         "name": name,
@@ -372,6 +383,9 @@ def download_asset(
         "size": len(payload),
         "expected_size": expected_size,
         "size_matches": size_matches,
+        "digest": digest,
+        "expected_digest": expected_digest,
+        "digest_matches": digest_matches,
     }
 
 
@@ -381,6 +395,16 @@ def is_non_negative_int(value: Any) -> bool:
 
 def is_positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def is_sha256_digest(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    prefix = "sha256:"
+    if not value.startswith(prefix):
+        return False
+    digest = value[len(prefix) :]
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
 def read_uploaded_evidence_summary(path: Path) -> dict[str, Any]:
