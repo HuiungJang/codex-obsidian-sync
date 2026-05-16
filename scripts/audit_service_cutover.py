@@ -156,6 +156,15 @@ def audit_service_cutover(
     if pre_config_path and post_config_path and pre_config_path != post_config_path:
         no_go_reasons.append("pre and post LaunchAgent --config paths differ")
     no_go_reasons.extend(validate_status_plist_paths(pre_status, stopped_status, post_status))
+    no_go_reasons.extend(
+        validate_status_config_paths(
+            pre_status,
+            stopped_status,
+            post_status,
+            pre_launchagent_config_path=pre_config_path,
+            post_launchagent_config_path=post_config_path,
+        )
+    )
     no_go_reasons.extend(validate_last_success_progression(pre_status, stopped_status, post_status))
     if expected_python_program_arg0 == expected_rust_program_arg0:
         no_go_reasons.append("expected Python and Rust binaries must differ")
@@ -299,6 +308,44 @@ def validate_status_plist_paths(
     return reasons
 
 
+def validate_status_config_paths(
+    pre_status: dict[str, Any],
+    stopped_status: dict[str, Any],
+    post_status: dict[str, Any],
+    *,
+    pre_launchagent_config_path: str | None,
+    post_launchagent_config_path: str | None,
+) -> list[str]:
+    reasons: list[str] = []
+    statuses = {
+        "pre": pre_status,
+        "stopped": stopped_status,
+        "post": post_status,
+    }
+    expected_paths = {
+        "pre": pre_launchagent_config_path,
+        "stopped": pre_launchagent_config_path,
+        "post": post_launchagent_config_path,
+    }
+    valid_paths: dict[str, str] = {}
+    for name, status in statuses.items():
+        value = status.get("config_path")
+        if not isinstance(value, str) or not value:
+            reasons.append(f"{name}: status config_path is missing")
+            continue
+        if not Path(value).is_absolute():
+            reasons.append(f"{name}: status config_path is not absolute")
+            continue
+
+        valid_paths[name] = value
+        expected_path = expected_paths[name]
+        if expected_path and value != expected_path:
+            reasons.append(f"{name}: status config_path does not match LaunchAgent --config path")
+    if len(valid_paths) == len(statuses) and len(set(valid_paths.values())) != 1:
+        reasons.append("pre, stopped, and post status config_path values differ")
+    return reasons
+
+
 def validate_last_success_progression(
     pre_status: dict[str, Any],
     stopped_status: dict[str, Any],
@@ -347,6 +394,7 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),
+        "status_config_path": status.get("config_path"),
         "program_arguments": program_arguments,
         "program_arguments_count": len(program_arguments),
         "program_arg0": program_arguments[0] if program_arguments else None,
@@ -364,6 +412,7 @@ def stopped_snapshot_summary(status: dict[str, Any], launchctl: str) -> dict[str
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),
+        "status_config_path": status.get("config_path"),
         "last_success": status.get("last_success"),
         "last_error": status.get("last_error"),
     }
