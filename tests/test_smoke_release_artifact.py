@@ -52,7 +52,25 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
                     for command in report["commands"]
                     if command["command"][-1:] == ["--version"]
                 ]
+                status_commands = [
+                    command
+                    for command in report["commands"]
+                    if command["command"][-2:] == ["status", "--json"]
+                ]
+                inspect_commands = [
+                    command
+                    for command in report["commands"]
+                    if "inspect-recent" in command["command"]
+                ]
+                sync_commands = [
+                    command
+                    for command in report["commands"]
+                    if "sync-once" in command["command"]
+                ]
                 self.assertEqual(version_commands[0]["stdout"].strip(), "codex-obsidian-sync 0.1.0")
+                self.assertEqual(status_commands[0]["returncode"], 0)
+                self.assertEqual(inspect_commands[0]["returncode"], 0)
+                self.assertEqual(sync_commands[0]["returncode"], 0)
                 self.assertTrue(report["vault_unchanged"])
                 self.assertEqual(report["note_files"], 1)
                 self.assertEqual(Path(report["work_dir"]), work_dir.resolve())

@@ -142,7 +142,7 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn(
-            "release smoke summary:aarch64-apple-darwin: release smoke did not record successful installed binary version",
+            "release smoke summary:aarch64-apple-darwin: release smoke did not record expected installed binary version output",
             report["no_go_reasons"],
         )
 
@@ -361,7 +361,39 @@ def write_release_smoke_summaries(
                             "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
                             "returncode": 0,
                             "stdout": version_command_stdout,
-                        }
+                        },
+                        {
+                            "command": [
+                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                "--config",
+                                "/tmp/config.toml",
+                                "status",
+                                "--json",
+                            ],
+                            "returncode": 0,
+                        },
+                        {
+                            "command": [
+                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                "inspect-recent",
+                                "--codex-home",
+                                "/tmp/.codex",
+                                "--limit",
+                                "3",
+                            ],
+                            "returncode": 0,
+                        },
+                        {
+                            "command": [
+                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                "--config",
+                                "/tmp/config.toml",
+                                "sync-once",
+                                "--dry-run-output",
+                                "/tmp/output",
+                            ],
+                            "returncode": 0,
+                        },
                     ],
                 }
             )
@@ -399,6 +431,27 @@ def write_homebrew_smoke_summary(
                         "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
                         "returncode": 0,
                         "stdout": f"{version}\n",
+                    },
+                    {
+                        "command": [
+                            "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                            "--config",
+                            "/tmp/config.toml",
+                            "status",
+                            "--json",
+                        ],
+                        "returncode": 0,
+                    },
+                    {
+                        "command": [
+                            "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                            "--config",
+                            "/tmp/config.toml",
+                            "sync-once",
+                            "--dry-run-output",
+                            "/tmp/output",
+                        ],
+                        "returncode": 0,
                     },
                     {"command": ["brew", "test", "codex-obsidian-sync"], "returncode": 0},
                     {

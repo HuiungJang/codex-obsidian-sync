@@ -274,7 +274,39 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                             "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
                             "returncode": 0,
                             "stdout": "codex-obsidian-sync 0.1.0\n",
-                        }
+                        },
+                        {
+                            "command": [
+                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                "--config",
+                                "/tmp/config.toml",
+                                "status",
+                                "--json",
+                            ],
+                            "returncode": 0,
+                        },
+                        {
+                            "command": [
+                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                "inspect-recent",
+                                "--codex-home",
+                                "/tmp/.codex",
+                                "--limit",
+                                "3",
+                            ],
+                            "returncode": 0,
+                        },
+                        {
+                            "command": [
+                                "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                                "--config",
+                                "/tmp/config.toml",
+                                "sync-once",
+                                "--dry-run-output",
+                                "/tmp/output",
+                            ],
+                            "returncode": 0,
+                        },
                     ],
                 }
             )
@@ -305,6 +337,27 @@ def write_homebrew_smoke_summary(release_dir: Path, formula: Path) -> None:
                         "command": ["/tmp/codex-obsidian-sync/bin/codex-obsidian-sync", "--version"],
                         "returncode": 0,
                         "stdout": "codex-obsidian-sync 0.1.0\n",
+                    },
+                    {
+                        "command": [
+                            "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                            "--config",
+                            "/tmp/config.toml",
+                            "status",
+                            "--json",
+                        ],
+                        "returncode": 0,
+                    },
+                    {
+                        "command": [
+                            "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+                            "--config",
+                            "/tmp/config.toml",
+                            "sync-once",
+                            "--dry-run-output",
+                            "/tmp/output",
+                        ],
+                        "returncode": 0,
                     },
                     {"command": ["brew", "test", "codex-obsidian-sync"], "returncode": 0},
                     {"command": ["brew", "uninstall", "--formula", "codex-obsidian-sync"], "returncode": 0},

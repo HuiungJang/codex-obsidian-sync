@@ -300,8 +300,18 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         reasons.append("release smoke note_files is not positive")
     if not isinstance(commands, list):
         reasons.append("release smoke commands are missing")
-    elif not has_successful_version_command(commands, f"{FORMULA_NAME} {version}"):
-        reasons.append("release smoke did not record successful installed binary version")
+    else:
+        required_binary_commands = {
+            "version": ("--version",),
+            "status": ("status", "--json"),
+            "inspect": ("inspect-recent",),
+            "sync": ("sync-once", "--dry-run-output"),
+        }
+        for label, sequence in required_binary_commands.items():
+            if not has_successful_installed_binary_command(commands, sequence):
+                reasons.append(f"release smoke did not record successful installed binary {label}")
+        if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}"):
+            reasons.append("release smoke did not record expected installed binary version output")
 
     return check(f"release smoke summary:{target}", not reasons, details, reasons)
 
@@ -370,8 +380,16 @@ def audit_homebrew_smoke_summary(
         for label, sequence in required_commands.items():
             if not has_successful_command(commands, sequence):
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
+        required_binary_commands = {
+            "version": ("--version",),
+            "status": ("status", "--json"),
+            "sync": ("sync-once", "--dry-run-output"),
+        }
+        for label, sequence in required_binary_commands.items():
+            if not has_successful_installed_binary_command(commands, sequence):
+                reasons.append(f"Homebrew smoke did not record successful installed binary {label}")
         if not has_successful_version_command(commands, f"{FORMULA_NAME} {version}"):
-            reasons.append("Homebrew smoke did not record successful installed binary version")
+            reasons.append("Homebrew smoke did not record expected installed binary version output")
 
     return check("homebrew smoke summary", not reasons, details, reasons)
 
@@ -597,6 +615,19 @@ def has_successful_version_command(commands: list[Any], expected_output: str) ->
         if len(parts) != 2 or Path(parts[0]).name != FORMULA_NAME or parts[1] != "--version":
             continue
         if str(command.get("stdout") or "").strip() == expected_output:
+            return True
+    return False
+
+
+def has_successful_installed_binary_command(commands: list[Any], sequence: tuple[str, ...]) -> bool:
+    for command in commands:
+        if not isinstance(command, dict) or command.get("returncode") != 0:
+            continue
+        command_value = command.get("command")
+        if not isinstance(command_value, list) or not command_value:
+            continue
+        parts = [str(part) for part in command_value]
+        if Path(parts[0]).name == FORMULA_NAME and command_has_sequence(parts, sequence):
             return True
     return False
 

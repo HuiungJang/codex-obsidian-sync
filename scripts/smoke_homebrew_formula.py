@@ -70,7 +70,7 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
 
         installed_binary = Path(prefix) / "bin" / FORMULA_NAME
         runtime = Path(tempfile.mkdtemp(prefix="codex-obsidian-sync-homebrew-smoke-"))
-        smoke_details = run_installed_binary_smoke(installed_binary, runtime)
+        smoke_details = run_installed_binary_smoke(installed_binary, runtime, commands)
         run_checked([str(brew_path), "test", FORMULA_NAME], commands)
     finally:
         if installed_by_script:
@@ -99,7 +99,11 @@ def brew_formula_is_installed(brew_path: Path, commands: list[dict[str, Any]]) -
     return result.returncode == 0
 
 
-def run_installed_binary_smoke(binary: Path, runtime: Path) -> dict[str, Any]:
+def run_installed_binary_smoke(
+    binary: Path,
+    runtime: Path,
+    commands: list[dict[str, Any]],
+) -> dict[str, Any]:
     private_mkdir(runtime)
     prepare_fixture(runtime)
     config_path = runtime / "config.toml"
@@ -107,7 +111,7 @@ def run_installed_binary_smoke(binary: Path, runtime: Path) -> dict[str, Any]:
     dry_run_output = runtime / "dry-run-output"
     vault_before = hash_tree(vault)
 
-    status = run_json([str(binary), "--config", str(config_path), "status", "--json"], runtime / "status")
+    status = run_json([str(binary), "--config", str(config_path), "status", "--json"], runtime / "status", commands)
     summary = run_json(
         [
             str(binary),
@@ -118,6 +122,7 @@ def run_installed_binary_smoke(binary: Path, runtime: Path) -> dict[str, Any]:
             str(dry_run_output),
         ],
         runtime / "sync-once",
+        commands,
     )
 
     vault_after = hash_tree(vault)
@@ -230,8 +235,8 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.chmod(0o600)
 
 
-def run_json(command: list[str], output_base: Path) -> Any:
-    result = run_checked(command, [])
+def run_json(command: list[str], output_base: Path, commands: list[dict[str, Any]]) -> Any:
+    result = run_checked(command, commands)
     output_base.with_suffix(".stdout").write_text(result.stdout, encoding="utf-8")
     output_base.with_suffix(".stderr").write_text(result.stderr, encoding="utf-8")
     return json.loads(result.stdout)
