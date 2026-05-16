@@ -275,6 +275,8 @@ def release_assets_by_name(
     browser_download_prefix = expected_browser_download_prefix(release, tag, repository)
     by_name: dict[str, dict[str, Any]] = {}
     duplicate_names: set[str] = set()
+    seen_asset_urls: dict[str, str] = {}
+    duplicate_asset_url_pairs: list[str] = []
     malformed_assets: list[str] = []
     for index, asset in enumerate(assets):
         if not isinstance(asset, dict):
@@ -289,6 +291,10 @@ def release_assets_by_name(
             malformed_assets.append(f"{name} is missing a download URL")
         elif not asset_url.startswith(asset_url_prefix):
             malformed_assets.append(f"{name} download URL is outside the requested repository")
+        elif asset_url in seen_asset_urls:
+            duplicate_asset_url_pairs.append(f"{seen_asset_urls[asset_url]} and {name} share {asset_url}")
+        else:
+            seen_asset_urls[asset_url] = name
         browser_download_url = asset.get("browser_download_url")
         expected_browser_download_url = f"{browser_download_prefix}{name}"
         if not isinstance(browser_download_url, str) or not browser_download_url:
@@ -308,6 +314,9 @@ def release_assets_by_name(
     if duplicate_names:
         duplicates = ", ".join(sorted(duplicate_names))
         raise RuntimeError(f"GitHub release has duplicate asset names: {duplicates}")
+    if duplicate_asset_url_pairs:
+        duplicates = ", ".join(sorted(duplicate_asset_url_pairs))
+        raise RuntimeError(f"GitHub release has duplicate asset download URLs: {duplicates}")
     return by_name
 
 

@@ -564,6 +564,49 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_release_asset_download_urls_are_duplicated(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            tarball_name = "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            checksum_name = f"{tarball_name}.sha256"
+            duplicate_url = f"{API_URL}/repos/{REPOSITORY}/releases/assets/{tarball_name}"
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    {
+                        "name": tarball_name,
+                        "url": duplicate_url,
+                        "browser_download_url": browser_download_url(tarball_name),
+                        "size": len(assets[tarball_name]),
+                    },
+                    {
+                        "name": checksum_name,
+                        "url": duplicate_url,
+                        "browser_download_url": browser_download_url(checksum_name),
+                        "size": len(assets[checksum_name]),
+                    },
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                reason.startswith("GitHub release has duplicate asset download URLs:")
+                for reason in result["no_go_reasons"]
+            )
+        )
+
     def test_refuses_non_empty_download_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
