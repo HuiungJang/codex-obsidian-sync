@@ -197,6 +197,8 @@ def build_record(
         no_go_reasons.append("LaunchAgent does not end with service-run")
     if skipped_invalid > previous_skipped_invalid and not allow_skipped_invalid_increase:
         no_go_reasons.append("skipped_invalid increased from previous monitor record")
+    if current_success is None:
+        no_go_reasons.append("last_success is missing or invalid")
     if current_success and previous_success and current_success < previous_success:
         no_go_reasons.append("last_success regressed from previous monitor record")
 

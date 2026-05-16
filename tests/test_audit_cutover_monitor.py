@@ -151,6 +151,62 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertIn("+4h: LaunchAgent Label does not match expected label", report["no_go_reasons"])
         self.assertIn("LaunchAgent label changed across monitor records", report["no_go_reasons"])
 
+    def test_fails_when_recorded_at_regresses(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(
+                root,
+                expected_binary=expected_binary,
+                recorded_ats={"+4h": "2026-05-16T00:30:00+00:00"},
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+4h: recorded_at regressed from an earlier checkpoint", report["no_go_reasons"])
+
+    def test_fails_when_last_success_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, last_successes={"+1h": "never run"})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+1h: last_success is missing or invalid", report["no_go_reasons"])
+
 
 def write_marker(root: Path) -> None:
     (root / ".codex-obsidian-sync-cutover-monitor").write_text(
@@ -167,11 +223,15 @@ def write_records(
     failed: set[str] | None = None,
     status_labels: dict[str, str] | None = None,
     plist_labels: dict[str, str] | None = None,
+    recorded_ats: dict[str, str] | None = None,
+    last_successes: dict[str, str] | None = None,
 ) -> None:
     omit = omit or set()
     failed = failed or set()
     status_labels = status_labels or {}
     plist_labels = plist_labels or {}
+    recorded_ats = recorded_ats or {}
+    last_successes = last_successes or {}
     checkpoints = {
         "+5m": ("plus5m.json", "2026-05-16T00:05:00+00:00"),
         "+1h": ("plus1h.json", "2026-05-16T01:00:00+00:00"),
@@ -187,7 +247,7 @@ def write_records(
                 {
                     "ok": not is_failed,
                     "checkpoint": checkpoint,
-                    "recorded_at": last_success,
+                    "recorded_at": recorded_ats.get(checkpoint, last_success),
                     "no_go_reasons": ["last_error is boom"] if is_failed else [],
                     "configured": True,
                     "status_launchd_label": status_labels.get(checkpoint, "com.codex.obsidian-sync"),
@@ -196,7 +256,7 @@ def write_records(
                     "launchctl_loaded": True,
                     "program_arg0": expected_binary,
                     "service_command": "service-run",
-                    "last_success": last_success,
+                    "last_success": last_successes.get(checkpoint, last_success),
                     "last_error": "boom" if is_failed else "none",
                     "skipped_invalid": 0,
                     "processed": 12,

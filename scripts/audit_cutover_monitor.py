@@ -144,11 +144,16 @@ def validate_record(
         reasons.append(f"{expected_checkpoint}: ProgramArguments[0] does not match expected binary")
     if record.get("last_error") not in (None, "none", "never run"):
         reasons.append(f"{expected_checkpoint}: last_error is {record.get('last_error')}")
+    if parse_iso_datetime(record.get("recorded_at")) is None:
+        reasons.append(f"{expected_checkpoint}: recorded_at is missing or invalid")
+    if parse_iso_datetime(record.get("last_success")) is None:
+        reasons.append(f"{expected_checkpoint}: last_success is missing or invalid")
     return reasons
 
 
 def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
     reasons: list[str] = []
+    previous_recorded_at: datetime | None = None
     previous_success: datetime | None = None
     previous_skipped_invalid: int | None = None
     label_values = {
@@ -164,6 +169,14 @@ def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
 
     for record in records:
         checkpoint = str(record.get("checkpoint"))
+        current_recorded_at = parse_iso_datetime(record.get("recorded_at"))
+        if previous_recorded_at and current_recorded_at and current_recorded_at < previous_recorded_at:
+            reasons.append(f"{checkpoint}: recorded_at regressed from an earlier checkpoint")
+        if current_recorded_at:
+            previous_recorded_at = (
+                max(previous_recorded_at, current_recorded_at) if previous_recorded_at else current_recorded_at
+            )
+
         current_success = parse_iso_datetime(record.get("last_success"))
         if previous_success and current_success and current_success < previous_success:
             reasons.append(f"{checkpoint}: last_success regressed from an earlier checkpoint")
