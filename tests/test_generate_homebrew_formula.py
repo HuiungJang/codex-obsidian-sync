@@ -102,6 +102,36 @@ class GenerateHomebrewFormulaTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not reference codex-obsidian-sync-aarch64-apple-darwin.tar.gz", result.stderr)
 
+    def test_rejects_checksum_without_target_filename(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            aarch64 = root / "aarch64.sha256"
+            x86_64 = root / "x86_64.sha256"
+            aarch64.write_text(f"{'a' * 64}\n", encoding="utf-8")
+            x86_64.write_text(
+                f"{'b' * 64}  codex-obsidian-sync-x86_64-apple-darwin.tar.gz\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/generate_homebrew_formula.py",
+                    "--version",
+                    "0.1.0",
+                    "--aarch64-checksum",
+                    str(aarch64),
+                    "--x86-64-checksum",
+                    str(x86_64),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not reference codex-obsidian-sync-aarch64-apple-darwin.tar.gz", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

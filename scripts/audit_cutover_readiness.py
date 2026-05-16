@@ -241,7 +241,7 @@ def read_checksum(path: Path, package_name: str) -> str:
         if not parts:
             continue
         checksum = parts[0]
-        if len(parts) > 1 and Path(parts[-1]).name != package_name:
+        if len(parts) == 1 or Path(parts[-1]).name != package_name:
             continue
         if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
             raise ValueError(f"invalid SHA-256 checksum in {path}")

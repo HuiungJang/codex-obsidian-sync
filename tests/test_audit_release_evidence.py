@@ -210,6 +210,40 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_checksum_file_does_not_reference_artifact_name(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            checksum_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256"
+            checksum_path.write_text(f"{checksums['aarch64-apple-darwin']}\n", encoding="utf-8")
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release artifact:aarch64-apple-darwin: checksum file does not reference "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_command_does_not_use_installed_binary(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)

@@ -79,6 +79,39 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
+    def test_rejects_checksum_without_tarball_filename(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_release_tarball(root)
+            checksum = write_checksum(tarball)
+            checksum.write_text(hashlib.sha256(tarball.read_bytes()).hexdigest() + "\n", encoding="utf-8")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/smoke_release_artifact.py",
+                        "--tarball",
+                        str(tarball),
+                        "--checksum",
+                        str(checksum),
+                        "--expected-version",
+                        "0.1.0",
+                        "--work-dir",
+                        str(work_dir),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"Checksum file does not reference {tarball.name}", result.stderr)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
 
 def write_release_tarball(root: Path) -> Path:
     source_dir = root / "source" / "codex-obsidian-sync-aarch64-apple-darwin"

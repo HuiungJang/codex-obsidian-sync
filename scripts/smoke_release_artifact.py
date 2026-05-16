@@ -207,7 +207,7 @@ def verify_checksum(tarball: Path, checksum: Path) -> None:
         parts = line.strip().split()
         if not parts:
             continue
-        if len(parts) == 1 or Path(parts[-1]).name == tarball.name:
+        if len(parts) > 1 and Path(parts[-1]).name == tarball.name:
             expected = parts[0]
             break
     if expected is None:
