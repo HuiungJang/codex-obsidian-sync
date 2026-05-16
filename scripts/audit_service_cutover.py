@@ -220,6 +220,8 @@ def validate_loaded_snapshot(
         reasons.append(f"{name}: launchctl print did not return a loaded service")
     elif not launchctl_contains_label(launchctl, expected_label):
         reasons.append(f"{name}: launchctl print did not include expected label")
+    elif launchctl_state(launchctl) != "running":
+        reasons.append(f"{name}: launchctl print state is not running")
     validate_last_error_clear(status, name, reasons)
     if not program_arguments:
         reasons.append(f"{name}: LaunchAgent ProgramArguments are missing")
@@ -393,6 +395,7 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
         "plist_label": plist.get("Label"),
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
+        "launchctl_state": launchctl_state(launchctl),
         "plist_path": status.get("plist_path"),
         "status_config_path": status.get("config_path"),
         "program_arguments": program_arguments,
@@ -411,6 +414,7 @@ def stopped_snapshot_summary(status: dict[str, Any], launchctl: str) -> dict[str
         "status_launchd_label": status.get("launchd_label"),
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
+        "launchctl_state": launchctl_state(launchctl),
         "plist_path": status.get("plist_path"),
         "status_config_path": status.get("config_path"),
         "last_success": status.get("last_success"),
@@ -435,6 +439,11 @@ def looks_loaded(launchctl: str) -> bool:
 def launchctl_contains_label(launchctl: str, expected_label: str) -> bool:
     label_pattern = re.escape(expected_label)
     return re.search(rf"(^|[\s/]){label_pattern}(?=\s*(=|\{{|$))", launchctl) is not None
+
+
+def launchctl_state(launchctl: str) -> str | None:
+    match = re.search(r"(?im)^[ \t]*state[ \t]*=[ \t]*([A-Za-z0-9_.-]+)[ \t]*$", launchctl)
+    return match.group(1).lower() if match else None
 
 
 def validated_program_arguments(value: Any, name: str, reasons: list[str]) -> list[str]:

@@ -33,10 +33,13 @@ class AuditServiceCutoverTests(unittest.TestCase):
         )
         self.assertEqual(report["snapshots"]["pre"]["program_arguments_count"], 4)
         self.assertEqual(report["snapshots"]["pre"]["program_arg0"], python_binary)
+        self.assertEqual(report["snapshots"]["pre"]["launchctl_state"], "running")
         self.assertEqual(report["snapshots"]["pre"]["status_config_path"], "/tmp/config.toml")
         self.assertFalse(report["snapshots"]["stopped"]["launchd_loaded"])
+        self.assertIsNone(report["snapshots"]["stopped"]["launchctl_state"])
         self.assertEqual(report["snapshots"]["stopped"]["status_config_path"], "/tmp/config.toml")
         self.assertEqual(report["snapshots"]["post"]["program_arg0"], rust_binary)
+        self.assertEqual(report["snapshots"]["post"]["launchctl_state"], "running")
         self.assertEqual(report["snapshots"]["post"]["status_config_path"], "/tmp/config.toml")
 
     def test_reports_ready_from_python_module_launchagent_shape(self) -> None:
@@ -289,6 +292,25 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["ok"])
         self.assertIn("post: launchctl print did not include expected label", report["no_go_reasons"])
+
+    def test_fails_when_loaded_launchctl_state_is_not_running(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            files["post_launchctl"].write_text(
+                launchctl_loaded_text("com.codex.obsidian-sync", state="waiting"),
+                encoding="utf-8",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["snapshots"]["post"]["launchctl_state"], "waiting")
+        self.assertIn("post: launchctl print state is not running", report["no_go_reasons"])
 
     def test_fails_when_pre_python_plist_has_unexpected_shape(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
@@ -731,8 +753,8 @@ def write_plist(
     )
 
 
-def launchctl_loaded_text(label: str) -> str:
-    return f"gui/501/{label} = {{\n\tstate = running\n}}\n"
+def launchctl_loaded_text(label: str, *, state: str = "running") -> str:
+    return f"gui/501/{label} = {{\n\tstate = {state}\n}}\n"
 
 
 if __name__ == "__main__":
