@@ -1238,6 +1238,42 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("homebrew formula: Homebrew formula is a symlink", report["no_go_reasons"])
 
+    def test_fails_when_homebrew_formula_test_block_is_missing(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            write_release_smoke_summaries(release_dir)
+            formula = write_formula(release_dir, checksums, include_test=False)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("homebrew formula: formula test block is missing", report["no_go_reasons"])
+        self.assertIn(
+            "homebrew formula: formula test does not run installed binary --version",
+            report["no_go_reasons"],
+        )
+        self.assertIn(
+            "homebrew formula: formula test does not assert the installed binary version",
+            report["no_go_reasons"],
+        )
+
     def assertCheckOk(self, report: dict[str, object], name: str) -> None:
         checks = report["checks"]
         self.assertIsInstance(checks, list)
@@ -1265,40 +1301,44 @@ def write_release_artifacts(release_dir: Path) -> dict[str, str]:
     return checksums
 
 
-def write_formula(release_dir: Path, checksums: dict[str, str]) -> Path:
+def write_formula(release_dir: Path, checksums: dict[str, str], *, include_test: bool = True) -> Path:
     path = release_dir / "codex-obsidian-sync.rb"
-    path.write_text(
-        "\n".join(
+    lines = [
+        "class CodexObsidianSync < Formula",
+        '  desc "Sync local Codex conversations into an Obsidian vault"',
+        '  homepage "https://github.com/HuiungJang/codex-obsidian-sync"',
+        '  license "Apache-2.0"',
+        '  version "0.1.0"',
+        "",
+        "  depends_on :macos",
+        "",
+        "  on_macos do",
+        "    on_arm do",
+        '      url "https://github.com/HuiungJang/codex-obsidian-sync/releases/download/v0.1.0/codex-obsidian-sync-aarch64-apple-darwin.tar.gz"',
+        f'      sha256 "{checksums["aarch64-apple-darwin"]}"',
+        "    end",
+        "",
+        "    on_intel do",
+        '      url "https://github.com/HuiungJang/codex-obsidian-sync/releases/download/v0.1.0/codex-obsidian-sync-x86_64-apple-darwin.tar.gz"',
+        f'      sha256 "{checksums["x86_64-apple-darwin"]}"',
+        "    end",
+        "  end",
+        "",
+        "  def install",
+        '    bin.install "codex-obsidian-sync"',
+        "  end",
+    ]
+    if include_test:
+        lines.extend(
             [
-                "class CodexObsidianSync < Formula",
-                '  desc "Sync local Codex conversations into an Obsidian vault"',
-                '  homepage "https://github.com/HuiungJang/codex-obsidian-sync"',
-                '  license "Apache-2.0"',
-                '  version "0.1.0"',
                 "",
-                "  depends_on :macos",
-                "",
-                "  on_macos do",
-                "    on_arm do",
-                '      url "https://github.com/HuiungJang/codex-obsidian-sync/releases/download/v0.1.0/codex-obsidian-sync-aarch64-apple-darwin.tar.gz"',
-                f'      sha256 "{checksums["aarch64-apple-darwin"]}"',
-                "    end",
-                "",
-                "    on_intel do",
-                '      url "https://github.com/HuiungJang/codex-obsidian-sync/releases/download/v0.1.0/codex-obsidian-sync-x86_64-apple-darwin.tar.gz"',
-                f'      sha256 "{checksums["x86_64-apple-darwin"]}"',
-                "    end",
+                "  test do",
+                '    assert_match "codex-obsidian-sync #{version}", shell_output("#{bin}/codex-obsidian-sync --version")',
                 "  end",
-                "",
-                "  def install",
-                '    bin.install "codex-obsidian-sync"',
-                "  end",
-                "end",
-                "",
             ]
-        ),
-        encoding="utf-8",
-    )
+        )
+    lines.extend(["end", ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
 

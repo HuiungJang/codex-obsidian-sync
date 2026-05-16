@@ -291,6 +291,14 @@ def audit_homebrew_formula(
     details["ruby_syntax_checked"] = False
     if f'version "{version}"' not in content:
         reasons.append("formula version does not match release version")
+    if f'bin.install "{FORMULA_NAME}"' not in content:
+        reasons.append("formula install block does not install the expected binary")
+    if "test do" not in content:
+        reasons.append("formula test block is missing")
+    if f'shell_output("#{{bin}}/{FORMULA_NAME} --version")' not in content:
+        reasons.append("formula test does not run installed binary --version")
+    if f'assert_match "{FORMULA_NAME} #{{version}}"' not in content:
+        reasons.append("formula test does not assert the installed binary version")
 
     tag = f"v{version}"
     base_url = f"https://github.com/{repository}/releases/download/{tag}"

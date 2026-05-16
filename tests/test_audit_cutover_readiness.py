@@ -1317,6 +1317,10 @@ def write_formula(path: Path, checksums: dict[str, str]) -> None:
                 "  def install",
                 '    bin.install "codex-obsidian-sync"',
                 "  end",
+                "",
+                "  test do",
+                '    assert_match "codex-obsidian-sync #{version}", shell_output("#{bin}/codex-obsidian-sync --version")',
+                "  end",
                 "end",
                 "",
             ]

@@ -579,6 +579,10 @@ def write_formula(release_dir: Path, checksums: dict[str, str]) -> Path:
                 "  def install",
                 '    bin.install "codex-obsidian-sync"',
                 "  end",
+                "",
+                "  test do",
+                '    assert_match "codex-obsidian-sync #{version}", shell_output("#{bin}/codex-obsidian-sync --version")',
+                "  end",
                 "end",
                 "",
             ]
