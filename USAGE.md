@@ -370,6 +370,9 @@ rollback은 Rust LaunchAgent를 먼저 내린 뒤 Python command가 plist에 다
 python3 scripts/capture_cutover_backup.py \
   --output-dir "/tmp/codex-obsidian-sync-backup-$(date +%Y%m%dT%H%M%S%z)" \
   --state-file "$HOME/.codex/obsidian-sync/sync-state.json"
+
+python3 scripts/audit_cutover_backup.py \
+  --backup-dir "/tmp/codex-obsidian-sync-backup-<timestamp>"
 ```
 
 ```bash
