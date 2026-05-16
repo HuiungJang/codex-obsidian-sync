@@ -252,7 +252,10 @@ fn redaction_matches_common_provider_and_assignment_shapes() {
     let github_token = format!("ghp_{}", "a".repeat(36));
     let github_fine_grained_token = format!("github_pat_{}_{}", "A".repeat(22), "B".repeat(59));
     let aws_access_key = format!("AKIA{}", "A".repeat(16));
-    let slack_token = concat!("xox", "b-123456789012-123456789012-abcdefghijklmnopqrstuvwx");
+    let slack_token = concat!(
+        "xox",
+        "b-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
+    );
     let npm_token = format!("npm_{}", "b".repeat(36));
     let google_api_key = format!("AIza{}", "C".repeat(35));
     let stripe_key = format!("sk_live_{}", "d".repeat(24));

@@ -54,7 +54,10 @@ fn inspect_recent_redacts_message_previews() {
     let root = temp_dir("inspect-recent");
     let codex_home = root.join(".codex");
     let session_id = "019d23a7-9258-7810-93cc-c6833b3481cd";
-    let slack_token = concat!("xox", "b-123456789012-123456789012-abcdefghijklmnopqrstuvwx");
+    let slack_token = concat!(
+        "xox",
+        "b-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
+    );
     let rollout = codex_home
         .join("sessions")
         .join("2026")
