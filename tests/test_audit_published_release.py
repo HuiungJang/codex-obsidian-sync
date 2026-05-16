@@ -478,6 +478,72 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_uploaded_evidence_summary_check_target_detail_does_not_match(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            summary = json.loads(assets["release-evidence-summary.json"].decode("utf-8"))
+            for check in summary["checks"]:
+                if check["name"] == "release smoke summary:aarch64-apple-darwin":
+                    check["details"]["target"] = "x86_64-apple-darwin"
+                    break
+            assets["release-evidence-summary.json"] = json.dumps(summary).encode("utf-8")
+            opener = FakeGitHubOpener(assets)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "uploaded release evidence summary check target mismatch: release smoke summary:aarch64-apple-darwin",
+            result["no_go_reasons"],
+        )
+
+    def test_fails_when_uploaded_evidence_summary_formula_details_do_not_match(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            summary = json.loads(assets["release-evidence-summary.json"].decode("utf-8"))
+            for check in summary["checks"]:
+                if check["name"] == "homebrew formula":
+                    check["details"]["version"] = "0.2.0"
+                    check["details"]["repository"] = "Other/repo"
+                elif check["name"] == "homebrew smoke summary":
+                    check["details"]["expected_version"] = "0.2.0"
+            assets["release-evidence-summary.json"] = json.dumps(summary).encode("utf-8")
+            opener = FakeGitHubOpener(assets)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "uploaded release evidence summary formula version does not match requested version",
+            result["no_go_reasons"],
+        )
+        self.assertIn(
+            "uploaded release evidence summary formula repository does not match requested repository",
+            result["no_go_reasons"],
+        )
+        self.assertIn(
+            "uploaded release evidence summary Homebrew smoke version does not match requested version",
+            result["no_go_reasons"],
+        )
+
     def test_fails_when_release_asset_entry_is_not_an_object(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)

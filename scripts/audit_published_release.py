@@ -466,6 +466,7 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, ta
             reasons.append(f"uploaded release evidence summary contains malformed check names: {malformed_names}")
         if malformed_details:
             reasons.append(f"uploaded release evidence summary contains malformed check details: {malformed_details}")
+        reasons.extend(validate_uploaded_check_details(checks, version, repository))
         uploaded_names = set(uploaded_name_counts)
         duplicate_names = sorted(name for name, count in uploaded_name_counts.items() if count > 1)
         if duplicate_names:
@@ -476,6 +477,27 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, ta
         missing_names = [name for name in required_evidence_check_names() if name not in uploaded_names]
         if missing_names:
             reasons.append(f"uploaded release evidence summary is missing checks: {missing_names}")
+    return reasons
+
+
+def validate_uploaded_check_details(checks: list[dict[str, Any]], version: str, repository: str) -> list[str]:
+    reasons: list[str] = []
+    for check in checks:
+        name = check.get("name")
+        details = check.get("details")
+        if not isinstance(name, str) or not isinstance(details, dict):
+            continue
+        if name.startswith("release artifact:") or name.startswith("release smoke summary:"):
+            expected_target = name.rsplit(":", 1)[1]
+            if details.get("target") != expected_target:
+                reasons.append(f"uploaded release evidence summary check target mismatch: {name}")
+        elif name == "homebrew formula":
+            if details.get("version") != version:
+                reasons.append("uploaded release evidence summary formula version does not match requested version")
+            if details.get("repository") != repository:
+                reasons.append("uploaded release evidence summary formula repository does not match requested repository")
+        elif name == "homebrew smoke summary" and details.get("expected_version") != version:
+            reasons.append("uploaded release evidence summary Homebrew smoke version does not match requested version")
     return reasons
 
 
