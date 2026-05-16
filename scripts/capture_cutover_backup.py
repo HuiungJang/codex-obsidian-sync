@@ -53,7 +53,7 @@ def prepare_output_dir(path: Path) -> Path:
         raise RuntimeError(f"backup path is not a directory: {resolved}")
     if resolved.exists() and any(resolved.iterdir()):
         raise RuntimeError(f"backup directory is not empty: {resolved}")
-    resolved.mkdir(parents=True, mode=0o700)
+    resolved.mkdir(parents=True, exist_ok=True, mode=0o700)
     resolved.chmod(0o700)
     marker = resolved / MARKER
     marker.write_text(MARKER_CONTENT, encoding="utf-8")

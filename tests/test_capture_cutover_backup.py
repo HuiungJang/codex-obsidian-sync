@@ -115,6 +115,46 @@ class CaptureCutoverBackupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("backup directory is not empty", result.stderr)
 
+    def test_accepts_existing_empty_backup_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-test-") as temp_dir:
+            with tempfile.TemporaryDirectory(
+                prefix="codex-obsidian-sync-backup-existing-",
+                dir=tempfile.gettempdir(),
+            ) as output_temp:
+                root = Path(temp_dir)
+                state = root / "sync-state.json"
+                plist = root / "agent.plist"
+                status = root / "status.json"
+                launchctl = root / "launchctl.txt"
+                output_dir = Path(output_temp)
+                state.write_text('{"files": {}}\n', encoding="utf-8")
+                plist.write_text("<plist><dict></dict></plist>\n", encoding="utf-8")
+                status.write_text(
+                    json.dumps({"configured": True, "state_file": str(state), "plist_path": str(plist)}) + "\n",
+                    encoding="utf-8",
+                )
+                launchctl.write_text("state = running\n", encoding="utf-8")
+
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/capture_cutover_backup.py",
+                        "--output-dir",
+                        str(output_dir),
+                        "--status-json-file",
+                        str(status),
+                        "--launchctl-print-file",
+                        str(launchctl),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                manifest = json.loads((output_dir / "backup-manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(manifest["ok"], manifest["no_go_reasons"])
+
     def test_refuses_symlinked_backup_directory(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-test-") as temp_dir:
             root = Path(temp_dir)
