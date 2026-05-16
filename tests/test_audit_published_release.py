@@ -86,6 +86,46 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertIn("GitHub release is still a draft", result["no_go_reasons"])
         self.assertIn("GitHub release is marked as a prerelease", result["no_go_reasons"])
 
+    def test_fails_when_release_publication_flags_are_missing(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            opener = FakeGitHubOpener(assets, include_publication_flags=False)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("GitHub release draft flag is missing or not false", result["no_go_reasons"])
+        self.assertIn("GitHub release prerelease flag is missing or not false", result["no_go_reasons"])
+
+    def test_fails_when_release_publication_flags_are_not_booleans(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            opener = FakeGitHubOpener(assets, draft="false", prerelease="false")
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("GitHub release draft flag is missing or not false", result["no_go_reasons"])
+        self.assertIn("GitHub release prerelease flag is missing or not false", result["no_go_reasons"])
+
     def test_fails_when_release_contains_unexpected_asset(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
@@ -146,10 +186,18 @@ class AuditPublishedReleaseTests(unittest.TestCase):
 
 
 class FakeGitHubOpener:
-    def __init__(self, assets: dict[str, bytes], *, draft: bool = False, prerelease: bool = False) -> None:
+    def __init__(
+        self,
+        assets: dict[str, bytes],
+        *,
+        draft: object = False,
+        prerelease: object = False,
+        include_publication_flags: bool = True,
+    ) -> None:
         self.assets = assets
         self.draft = draft
         self.prerelease = prerelease
+        self.include_publication_flags = include_publication_flags
         self.release_url = f"{API_URL}/repos/{REPOSITORY}/releases/tags/v0.1.0"
 
     def __call__(self, request: Any) -> "FakeResponse":
@@ -163,11 +211,9 @@ class FakeGitHubOpener:
         raise RuntimeError(f"unexpected URL: {request.full_url}")
 
     def release_json(self) -> dict[str, Any]:
-        return {
+        release = {
             "tag_name": "v0.1.0",
             "html_url": "https://github.example.test/HuiungJang/codex-obsidian-sync/releases/tag/v0.1.0",
-            "draft": self.draft,
-            "prerelease": self.prerelease,
             "assets": [
                 {
                     "name": name,
@@ -177,6 +223,10 @@ class FakeGitHubOpener:
                 for name, payload in sorted(self.assets.items())
             ],
         }
+        if self.include_publication_flags:
+            release["draft"] = self.draft
+            release["prerelease"] = self.prerelease
+        return release
 
 
 class FakeResponse:

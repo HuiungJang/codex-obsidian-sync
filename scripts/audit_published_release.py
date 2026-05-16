@@ -209,10 +209,16 @@ def validate_release_metadata(release: dict[str, Any], tag: str) -> list[str]:
     reasons: list[str] = []
     if release.get("tag_name") != tag:
         reasons.append("GitHub release tag does not match requested tag")
-    if release.get("draft") is True:
+    draft = release.get("draft")
+    prerelease = release.get("prerelease")
+    if draft is True:
         reasons.append("GitHub release is still a draft")
-    if release.get("prerelease") is True:
+    elif draft is not False:
+        reasons.append("GitHub release draft flag is missing or not false")
+    if prerelease is True:
         reasons.append("GitHub release is marked as a prerelease")
+    elif prerelease is not False:
+        reasons.append("GitHub release prerelease flag is missing or not false")
     return reasons
 
 
