@@ -439,14 +439,20 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, ta
             reasons.append("uploaded release evidence summary contains check no-go reasons")
         uploaded_name_counts: dict[str, int] = {}
         malformed_names: list[str] = []
+        malformed_details: list[str] = []
         for index, check in enumerate(checks):
             name = check.get("name")
             if not isinstance(name, str) or not name.strip():
                 malformed_names.append(f"#{index}")
                 continue
             uploaded_name_counts[name] = uploaded_name_counts.get(name, 0) + 1
+            details = check.get("details")
+            if not isinstance(details, dict) or not details:
+                malformed_details.append(name)
         if malformed_names:
             reasons.append(f"uploaded release evidence summary contains malformed check names: {malformed_names}")
+        if malformed_details:
+            reasons.append(f"uploaded release evidence summary contains malformed check details: {malformed_details}")
         uploaded_names = set(uploaded_name_counts)
         duplicate_names = sorted(name for name, count in uploaded_name_counts.items() if count > 1)
         if duplicate_names:
