@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 use assert_cmd::prelude::*;
 use codex_obsidian_sync_rs::config::SyncConfig;
 use codex_obsidian_sync_rs::lock::ProcessLock;
@@ -384,6 +387,125 @@ fn write_mode_writes_notes_and_state_to_real_paths() {
     let state = read_json(&config.state_file);
     assert_eq!(
         state["files"][rollout.to_string_lossy().as_ref()]["included"],
+        true
+    );
+}
+
+#[test]
+fn write_mode_recovers_when_index_note_write_fails_after_conversation_note() {
+    let root = temp_dir("write-index-failure-recovery");
+    let config = sync_config(&root, false);
+    let session_id = "019d23a7-9258-7810-93cc-c6833b348320";
+    let rollout = write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        session_id,
+        &[
+            session_meta(session_id, "2026-04-03T01:20:00Z", json!("vscode")),
+            message_record("2026-04-03T01:20:01Z", "user", None, "부분 실패 첫 질문"),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[index_entry(
+            session_id,
+            "index failure recovery",
+            "2026-04-03T01:20:02Z",
+        )],
+    );
+    sync_once_write_with_options(&config, run_options()).unwrap();
+    let old_state = fs::read(&config.state_file).unwrap();
+    append_jsonl(
+        &rollout,
+        &message_record(
+            "2026-04-03T01:20:02Z",
+            "assistant",
+            Some("final_answer"),
+            "부분 실패 후속 응답",
+        ),
+    );
+    let daily_note = config.vault.join("Codex/Daily/2026-04-03.md");
+    fs::remove_file(&daily_note).unwrap();
+    fs::create_dir(&daily_note).unwrap();
+
+    let error = sync_once_write_with_options(&config, run_options()).unwrap_err();
+
+    assert_eq!(error.to_string(), "write error");
+    let conversation_text = fs::read_to_string(single_conversation_note(&config.vault)).unwrap();
+    assert!(conversation_text.contains("부분 실패 후속 응답"));
+    assert_eq!(fs::read(&config.state_file).unwrap(), old_state);
+
+    fs::remove_dir(&daily_note).unwrap();
+    let summary = sync_once_write_with_options(&config, run_options()).unwrap();
+
+    assert_eq!(summary.processed, 1);
+    assert!(daily_note.is_file());
+    assert!(config.vault.join("Codex/Projects/demo-project.md").exists());
+    assert_eq!(
+        read_json(&config.state_file)["files"][rollout.to_string_lossy().as_ref()]["included"],
+        true
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_mode_recovers_when_state_save_fails_after_note_writes() {
+    let root = temp_dir("write-state-failure-recovery");
+    let config = sync_config(&root, false);
+    let session_id = "019d23a7-9258-7810-93cc-c6833b348321";
+    let rollout = write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        session_id,
+        &[
+            session_meta(session_id, "2026-04-03T01:21:00Z", json!("vscode")),
+            message_record("2026-04-03T01:21:01Z", "user", None, "state 실패 첫 질문"),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[index_entry(
+            session_id,
+            "state failure recovery",
+            "2026-04-03T01:21:02Z",
+        )],
+    );
+    sync_once_write_with_options(&config, run_options()).unwrap();
+    let old_state = fs::read(&config.state_file).unwrap();
+    append_jsonl(
+        &rollout,
+        &message_record(
+            "2026-04-03T01:21:02Z",
+            "assistant",
+            Some("final_answer"),
+            "state 실패 후속 응답",
+        ),
+    );
+    let blocked_state_target = root.join("blocked-state-target.json");
+    fs::write(&blocked_state_target, &old_state).unwrap();
+    fs::remove_file(&config.state_file).unwrap();
+    symlink(&blocked_state_target, &config.state_file).unwrap();
+
+    let error = sync_once_write_with_options(&config, run_options()).unwrap_err();
+
+    assert_eq!(error.to_string(), "write error");
+    let conversation_text = fs::read_to_string(single_conversation_note(&config.vault)).unwrap();
+    assert!(conversation_text.contains("state 실패 후속 응답"));
+    assert!(config.vault.join("Codex/Daily/2026-04-03.md").exists());
+    assert!(config.vault.join("Codex/Projects/demo-project.md").exists());
+    assert_eq!(fs::read(&blocked_state_target).unwrap(), old_state);
+
+    fs::remove_file(&config.state_file).unwrap();
+    fs::write(&config.state_file, old_state).unwrap();
+    let summary = sync_once_write_with_options(&config, run_options()).unwrap();
+
+    assert_eq!(summary.processed, 1);
+    assert_eq!(
+        read_json(&config.state_file)["files"][rollout.to_string_lossy().as_ref()]["included"],
         true
     );
 }
