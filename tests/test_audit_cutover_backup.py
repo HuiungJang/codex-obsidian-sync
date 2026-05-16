@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -217,6 +218,51 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["ok"])
         self.assertIn("backup file is missing: launchagent.plist", report["no_go_reasons"])
+
+    def test_fails_when_launchagent_backup_plist_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            plist = backup_dir / "launchagent.plist"
+            plist.write_text("not a plist\n", encoding="utf-8")
+            update_manifest_file_entry(backup_dir, "launchagent.plist")
+
+            report = audit_cutover_backup.audit_backup_dir(backup_dir)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(reason.startswith("backup launchagent.plist is invalid:") for reason in report["no_go_reasons"])
+        )
+
+    def test_fails_when_launchagent_backup_label_is_unexpected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            write_launchagent_plist(
+                backup_dir / "launchagent.plist",
+                label="com.codex.obsidian-sync.other",
+            )
+            update_manifest_file_entry(backup_dir, "launchagent.plist")
+
+            report = audit_cutover_backup.audit_backup_dir(backup_dir)
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "backup LaunchAgent Label does not match expected label",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_launchagent_backup_config_path_is_relative(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            write_launchagent_plist(backup_dir / "launchagent.plist", config_path="config.toml")
+            update_manifest_file_entry(backup_dir, "launchagent.plist")
+
+            report = audit_cutover_backup.audit_backup_dir(backup_dir)
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "backup LaunchAgent --config path is not absolute",
+            report["no_go_reasons"],
+        )
 
     def test_fails_when_backup_directory_contains_unexpected_file(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
@@ -492,7 +538,7 @@ def create_backup(root: Path) -> Path:
     launchctl = root / "launchctl.txt"
     backup_dir = Path(tempfile.gettempdir()) / f"codex-obsidian-sync-backup-{root.name}"
     state.write_text('{"files": {}}\n', encoding="utf-8")
-    plist.write_text("<plist><dict></dict></plist>\n", encoding="utf-8")
+    write_launchagent_plist(plist)
     status.write_text(
         json.dumps({"configured": True, "state_file": str(state), "plist_path": str(plist)}) + "\n",
         encoding="utf-8",
@@ -516,6 +562,42 @@ def create_backup(root: Path) -> Path:
     if result.returncode != 0:
         raise AssertionError(result.stderr)
     return backup_dir
+
+
+def write_launchagent_plist(
+    path: Path,
+    *,
+    label: str = "com.codex.obsidian-sync",
+    config_path: str = "/tmp/config.toml",
+) -> None:
+    path.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": label,
+                "ProgramArguments": [
+                    "/tmp/codex-obsidian-sync-python",
+                    "-m",
+                    "codex_obsidian_sync.cli",
+                    "--config",
+                    config_path,
+                    "service-run",
+                ],
+            },
+            fmt=plistlib.FMT_XML,
+            sort_keys=False,
+        )
+    )
+
+
+def update_manifest_file_entry(backup_dir: Path, name: str) -> None:
+    manifest_path = backup_dir / "backup-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    path = backup_dir / name
+    for entry in manifest["files"]:
+        if entry["name"] == name:
+            entry["size"] = path.stat().st_size
+            entry["sha256"] = checksum(path)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def checksum(path: Path) -> str:

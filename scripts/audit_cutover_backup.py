@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import plistlib
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from capture_cutover_backup import MARKER, MARKER_CONTENT
+from capture_cutover_backup import DEFAULT_LABEL, MARKER, MARKER_CONTENT
 
 EXPECTED_FILE_ENTRY_NAMES = {
     "status.json",
@@ -120,6 +121,7 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
                     else:
                         no_go_reasons.append("backup manifest contains a non-object file entry")
                 no_go_reasons.extend(validate_status_sources(root, manifest_entries))
+                no_go_reasons.extend(validate_launchagent_backup(root))
         no_go_reasons.extend(audit_directory_contents(root, file_results))
 
     required_names = {result["name"] for result in file_results if result.get("required")}
@@ -194,6 +196,64 @@ def validate_source_path(
     elif source_path.resolve() != status_path.resolve():
         reasons.append(f"backup file source does not match status {status_field}: {backup_name}")
     return reasons
+
+
+def validate_launchagent_backup(root: Path) -> list[str]:
+    path = root / "launchagent.plist"
+    if path.is_symlink() or not path.is_file():
+        return []
+    try:
+        plist = plistlib.loads(path.read_bytes())
+    except plistlib.InvalidFileException as error:
+        return [f"backup launchagent.plist is invalid: {error}"]
+    if not isinstance(plist, dict):
+        return ["backup launchagent.plist is not a dictionary"]
+
+    reasons: list[str] = []
+    if plist.get("Label") != DEFAULT_LABEL:
+        reasons.append("backup LaunchAgent Label does not match expected label")
+    program_arguments = validated_program_arguments(plist.get("ProgramArguments"), reasons)
+    if not program_arguments:
+        reasons.append("backup LaunchAgent ProgramArguments are missing")
+    else:
+        if not Path(program_arguments[0]).is_absolute():
+            reasons.append("backup LaunchAgent ProgramArguments[0] is not absolute")
+        if program_arguments[-1] != "service-run":
+            reasons.append("backup LaunchAgent does not end with service-run")
+        validate_config_argument(program_arguments, reasons)
+    return reasons
+
+
+def validated_program_arguments(value: Any, reasons: list[str]) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        reasons.append("backup LaunchAgent ProgramArguments is not a list")
+        return []
+    if not all(isinstance(item, str) and item for item in value):
+        reasons.append("backup LaunchAgent ProgramArguments contains non-string or empty values")
+        return []
+    return value
+
+
+def validate_config_argument(program_arguments: list[str], reasons: list[str]) -> None:
+    config_indexes = [index for index, argument in enumerate(program_arguments) if argument == "--config"]
+    if not config_indexes:
+        reasons.append("backup LaunchAgent ProgramArguments must include --config before service-run")
+        return
+    if len(config_indexes) > 1:
+        reasons.append("backup LaunchAgent ProgramArguments contains multiple --config values")
+        return
+
+    config_index = config_indexes[0]
+    service_index = len(program_arguments) - 1
+    if config_index >= service_index - 1:
+        reasons.append("backup LaunchAgent --config value is missing before service-run")
+        return
+
+    config_path = program_arguments[config_index + 1]
+    if not Path(config_path).is_absolute():
+        reasons.append("backup LaunchAgent --config path is not absolute")
 
 
 def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
