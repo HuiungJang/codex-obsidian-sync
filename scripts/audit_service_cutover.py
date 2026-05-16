@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+DEFAULT_LABEL = "com.codex.obsidian-sync"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit read-only evidence for the Python-to-Rust LaunchAgent cutover.")
@@ -26,6 +28,7 @@ def main() -> int:
     parser.add_argument("--post-launchctl-print-file", required=True, type=Path, help="launchctl print after Rust start.")
     parser.add_argument("--expected-python-program-arg0", required=True, help="Expected Python rollback ProgramArguments[0].")
     parser.add_argument("--expected-rust-program-arg0", required=True, help="Expected Rust ProgramArguments[0].")
+    parser.add_argument("--expected-label", default=DEFAULT_LABEL, help="Expected LaunchAgent label.")
     parser.add_argument("--output", type=Path, help="Write the cutover audit report to this path.")
     args = parser.parse_args()
 
@@ -40,6 +43,7 @@ def main() -> int:
         post_launchctl=read_text(args.post_launchctl_print_file),
         expected_python_program_arg0=args.expected_python_program_arg0,
         expected_rust_program_arg0=args.expected_rust_program_arg0,
+        expected_label=args.expected_label,
     )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +64,7 @@ def audit_service_cutover(
     post_launchctl: str,
     expected_python_program_arg0: str,
     expected_rust_program_arg0: str,
+    expected_label: str = DEFAULT_LABEL,
 ) -> dict[str, Any]:
     snapshots = {
         "pre": snapshot_summary(pre_status, pre_plist, pre_launchctl),
@@ -74,9 +79,12 @@ def audit_service_cutover(
             plist=pre_plist,
             launchctl=pre_launchctl,
             expected_program_arg0=expected_python_program_arg0,
+            expected_label=expected_label,
         )
     )
-    no_go_reasons.extend(validate_stopped_snapshot(stopped_status, stopped_launchctl))
+    no_go_reasons.extend(
+        validate_stopped_snapshot(stopped_status, stopped_launchctl, expected_label=expected_label)
+    )
     no_go_reasons.extend(
         validate_loaded_snapshot(
             name="post",
@@ -84,6 +92,7 @@ def audit_service_cutover(
             plist=post_plist,
             launchctl=post_launchctl,
             expected_program_arg0=expected_rust_program_arg0,
+            expected_label=expected_label,
         )
     )
 
@@ -97,6 +106,7 @@ def audit_service_cutover(
     return {
         "ok": not no_go_reasons,
         "generated_at": datetime.now(UTC).isoformat(),
+        "expected_label": expected_label,
         "expected_python_program_arg0": expected_python_program_arg0,
         "expected_rust_program_arg0": expected_rust_program_arg0,
         "snapshots": snapshots,
@@ -111,11 +121,17 @@ def validate_loaded_snapshot(
     plist: dict[str, Any],
     launchctl: str,
     expected_program_arg0: str,
+    expected_label: str,
 ) -> list[str]:
     reasons: list[str] = []
     program_arguments = list(plist.get("ProgramArguments") or [])
+    plist_label = plist.get("Label")
     if not status.get("configured"):
         reasons.append(f"{name}: status reports configured=false")
+    if status.get("launchd_label") != expected_label:
+        reasons.append(f"{name}: status launchd_label does not match expected label")
+    if plist_label != expected_label:
+        reasons.append(f"{name}: LaunchAgent Label does not match expected label")
     if not status.get("launchd_loaded"):
         reasons.append(f"{name}: status reports launchd_loaded=false")
     if not looks_loaded(launchctl):
@@ -132,10 +148,12 @@ def validate_loaded_snapshot(
     return reasons
 
 
-def validate_stopped_snapshot(status: dict[str, Any], launchctl: str) -> list[str]:
+def validate_stopped_snapshot(status: dict[str, Any], launchctl: str, *, expected_label: str) -> list[str]:
     reasons: list[str] = []
     if not status.get("configured"):
         reasons.append("stopped: status reports configured=false")
+    if status.get("launchd_label") != expected_label:
+        reasons.append("stopped: status launchd_label does not match expected label")
     if status.get("launchd_loaded"):
         reasons.append("stopped: status still reports launchd_loaded=true")
     if looks_loaded(launchctl):
@@ -147,6 +165,8 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
     program_arguments = list(plist.get("ProgramArguments") or [])
     return {
         "configured": bool(status.get("configured")),
+        "status_launchd_label": status.get("launchd_label"),
+        "plist_label": plist.get("Label"),
         "launchd_loaded": bool(status.get("launchd_loaded")),
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),
@@ -160,6 +180,7 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
 def stopped_snapshot_summary(status: dict[str, Any], launchctl: str) -> dict[str, Any]:
     return {
         "configured": bool(status.get("configured")),
+        "status_launchd_label": status.get("launchd_label"),
         "launchd_loaded": bool(status.get("launchd_loaded")),
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),

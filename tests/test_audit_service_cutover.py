@@ -22,6 +22,7 @@ class AuditServiceCutoverTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report["ok"], report["no_go_reasons"])
+        self.assertEqual(report["snapshots"]["pre"]["plist_label"], "com.codex.obsidian-sync")
         self.assertEqual(report["snapshots"]["pre"]["program_arg0"], python_binary)
         self.assertFalse(report["snapshots"]["stopped"]["launchd_loaded"])
         self.assertEqual(report["snapshots"]["post"]["program_arg0"], rust_binary)
@@ -80,6 +81,44 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("post: launchctl print did not return a loaded service", report["no_go_reasons"])
 
+    def test_fails_when_post_plist_label_is_unexpected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(
+                root,
+                python_binary=python_binary,
+                rust_binary=rust_binary,
+                post_plist_label="com.codex.obsidian-sync.other",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: LaunchAgent Label does not match expected label", report["no_go_reasons"])
+
+    def test_fails_when_stopped_status_label_is_unexpected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(
+                root,
+                python_binary=python_binary,
+                rust_binary=rust_binary,
+                stopped_status_label="com.codex.obsidian-sync.other",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("stopped: status launchd_label does not match expected label", report["no_go_reasons"])
+
 
 def run_audit(files: dict[str, Path], python_binary: str, rust_binary: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -120,6 +159,11 @@ def write_cutover_files(
     rust_binary: str,
     stopped_loaded: bool = False,
     post_program_arg0: str | None = None,
+    pre_status_label: str = "com.codex.obsidian-sync",
+    stopped_status_label: str = "com.codex.obsidian-sync",
+    post_status_label: str = "com.codex.obsidian-sync",
+    pre_plist_label: str = "com.codex.obsidian-sync",
+    post_plist_label: str = "com.codex.obsidian-sync",
 ) -> dict[str, Path]:
     post_program_arg0 = post_program_arg0 or rust_binary
     files = {
@@ -132,25 +176,26 @@ def write_cutover_files(
         "post_plist": root / "post.plist",
         "post_launchctl": root / "post-launchctl.txt",
     }
-    write_status(files["pre_status"], launchd_loaded=True)
-    write_plist(files["pre_plist"], python_binary)
+    write_status(files["pre_status"], launchd_loaded=True, label=pre_status_label)
+    write_plist(files["pre_plist"], python_binary, label=pre_plist_label)
     files["pre_launchctl"].write_text("state = running\n", encoding="utf-8")
-    write_status(files["stopped_status"], launchd_loaded=stopped_loaded)
+    write_status(files["stopped_status"], launchd_loaded=stopped_loaded, label=stopped_status_label)
     files["stopped_launchctl"].write_text(
         "state = running\n" if stopped_loaded else "could not find service\n",
         encoding="utf-8",
     )
-    write_status(files["post_status"], launchd_loaded=True)
-    write_plist(files["post_plist"], post_program_arg0)
+    write_status(files["post_status"], launchd_loaded=True, label=post_status_label)
+    write_plist(files["post_plist"], post_program_arg0, label=post_plist_label)
     files["post_launchctl"].write_text("state = running\n", encoding="utf-8")
     return files
 
 
-def write_status(path: Path, *, launchd_loaded: bool) -> None:
+def write_status(path: Path, *, launchd_loaded: bool, label: str) -> None:
     path.write_text(
         json.dumps(
             {
                 "configured": True,
+                "launchd_label": label,
                 "launchd_loaded": launchd_loaded,
                 "plist_path": "/tmp/com.codex.obsidian-sync.plist",
                 "last_success": "2026-05-16T00:05:00+00:00",
@@ -162,11 +207,11 @@ def write_status(path: Path, *, launchd_loaded: bool) -> None:
     )
 
 
-def write_plist(path: Path, program_arg0: str) -> None:
+def write_plist(path: Path, program_arg0: str, *, label: str) -> None:
     path.write_bytes(
         plistlib.dumps(
             {
-                "Label": "com.codex.obsidian-sync",
+                "Label": label,
                 "ProgramArguments": [
                     program_arg0,
                     "--config",
