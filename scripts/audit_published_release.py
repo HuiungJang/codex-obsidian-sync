@@ -100,7 +100,7 @@ def audit_published_release(
             github_token=github_token,
             opener=opener,
         )
-        no_go_reasons.extend(validate_release_metadata(release, tag))
+        no_go_reasons.extend(validate_release_metadata(release, tag, repository))
 
         assets = release_assets_by_name(
             release,
@@ -226,10 +226,16 @@ def fetch_release(
     return release
 
 
-def validate_release_metadata(release: dict[str, Any], tag: str) -> list[str]:
+def validate_release_metadata(release: dict[str, Any], tag: str, repository: str) -> list[str]:
     reasons: list[str] = []
     if release.get("tag_name") != tag:
         reasons.append("GitHub release tag does not match requested tag")
+    html_url = release.get("html_url")
+    expected_url_suffix = f"/{repository}/releases/tag/{tag}"
+    if not isinstance(html_url, str) or not html_url:
+        reasons.append("GitHub release html_url is missing")
+    elif not html_url.endswith(expected_url_suffix):
+        reasons.append("GitHub release html_url does not match requested repository and tag")
     draft = release.get("draft")
     prerelease = release.get("prerelease")
     if draft is True:

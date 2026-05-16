@@ -127,6 +127,31 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertIn("GitHub release draft flag is missing or not false", result["no_go_reasons"])
         self.assertIn("GitHub release prerelease flag is missing or not false", result["no_go_reasons"])
 
+    def test_fails_when_release_html_url_points_to_another_repository(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            opener = FakeGitHubOpener(
+                assets,
+                html_url="https://github.example.test/Other/repo/releases/tag/v0.1.0",
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release html_url does not match requested repository and tag",
+            result["no_go_reasons"],
+        )
+
     def test_fails_when_release_contains_unexpected_asset(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
@@ -430,12 +455,14 @@ class FakeGitHubOpener:
         draft: object = False,
         prerelease: object = False,
         include_publication_flags: bool = True,
+        html_url: object = "https://github.example.test/HuiungJang/codex-obsidian-sync/releases/tag/v0.1.0",
         release_assets: list[Any] | None = None,
     ) -> None:
         self.assets = assets
         self.draft = draft
         self.prerelease = prerelease
         self.include_publication_flags = include_publication_flags
+        self.html_url = html_url
         self.release_assets = release_assets
         self.release_url = f"{API_URL}/repos/{REPOSITORY}/releases/tags/v0.1.0"
 
@@ -460,7 +487,7 @@ class FakeGitHubOpener:
         ]
         release = {
             "tag_name": "v0.1.0",
-            "html_url": "https://github.example.test/HuiungJang/codex-obsidian-sync/releases/tag/v0.1.0",
+            "html_url": self.html_url,
             "assets": release_assets,
         }
         if self.include_publication_flags:
