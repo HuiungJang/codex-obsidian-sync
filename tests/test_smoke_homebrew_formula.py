@@ -157,6 +157,42 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Formula is a symlink", result.stderr)
 
+    def test_rejects_symlinked_output_before_installing(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-brew-smoke-") as temp_dir:
+            root = Path(temp_dir)
+            formula = root / "codex-obsidian-sync.rb"
+            formula.write_text("class CodexObsidianSync < Formula\nend\n", encoding="utf-8")
+            brew = write_fake_brew(root, version="0.1.0")
+            output_target = root / "target-summary.json"
+            output = root / "summary.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_homebrew_formula.py",
+                    "--formula",
+                    str(formula),
+                    "--expected-version",
+                    "0.1.0",
+                    "--brew",
+                    str(brew),
+                    "--output",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            log = root / "brew.log"
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(log.exists())
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Output path is a symlink", result.stderr)
+
 
 def write_fake_brew(root: Path, *, version: str, preinstalled: bool = False) -> Path:
     brew = root / "brew"

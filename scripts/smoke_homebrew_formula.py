@@ -30,16 +30,26 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="Write the smoke report to this path.")
     args = parser.parse_args()
 
+    output = resolve_output_path(args.output)
     result = run_smoke(
         formula=args.formula,
         expected_version=normalize_version(args.expected_version),
         brew=args.brew,
     )
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        write_json(args.output, result)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        write_json(output, result)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
+
+
+def resolve_output_path(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    output = path.expanduser()
+    if output.is_symlink():
+        raise RuntimeError(f"Output path is a symlink: {output}")
+    return output
 
 
 def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, Any]:
