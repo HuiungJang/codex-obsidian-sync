@@ -88,6 +88,8 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
                 no_go_reasons.append("backup manifest output_dir is missing")
             if manifest.get("ok") is not True:
                 no_go_reasons.append("backup manifest ok is not true")
+            if not is_parseable_timestamp(manifest.get("generated_at")):
+                no_go_reasons.append("backup manifest generated_at is missing or invalid")
             manifest_reasons = manifest.get("no_go_reasons")
             if manifest_reasons not in ([], None):
                 no_go_reasons.append("backup manifest contains no-go reasons")
@@ -270,6 +272,16 @@ def is_relative_to(path: Path, parent: Path) -> bool:
 
 def is_non_negative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def is_parseable_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return timestamp.tzinfo is not None and timestamp.utcoffset() is not None
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
