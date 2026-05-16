@@ -264,10 +264,14 @@ def validate_tarball_shape(tarball: Path) -> None:
     with tarfile.open(tarball, "r:gz") as archive:
         members = archive.getmembers()
         binary_members = []
+        seen_paths: set[Path] = set()
         for member in members:
             member_path = Path(member.name)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise ValueError(f"unsafe tar member path: {member.name}")
+            if member_path in seen_paths:
+                raise ValueError(f"duplicate tar member path: {member.name}")
+            seen_paths.add(member_path)
             if not (member.isfile() or member.isdir()):
                 raise ValueError(f"unsupported tar member type: {member.name}")
             if member.isfile() and member_path.name == FORMULA_NAME:
