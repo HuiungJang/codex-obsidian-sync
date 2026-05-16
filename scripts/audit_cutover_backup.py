@@ -10,6 +10,19 @@ from typing import Any
 
 from capture_cutover_backup import MARKER, MARKER_CONTENT
 
+EXPECTED_FILE_ENTRY_NAMES = {
+    "status.json",
+    "sync-state.json",
+    "launchagent.plist",
+    "launchctl-print.txt",
+}
+ALLOWED_UNRECORDED_NAMES = {
+    MARKER,
+    "backup-manifest.json",
+    "status.stderr",
+    "launchctl-print.stderr",
+}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit a captured cutover rollback backup manifest.")
@@ -38,13 +51,23 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
         marker = root / MARKER
         if not marker.is_file():
             no_go_reasons.append("backup directory marker is missing")
+        elif marker.is_symlink():
+            no_go_reasons.append("backup directory marker is a symlink")
         elif marker.read_text(encoding="utf-8") != MARKER_CONTENT:
             no_go_reasons.append("backup directory marker content is not managed by capture_cutover_backup.py")
 
         if not manifest_path.is_file():
             no_go_reasons.append("backup manifest is missing")
+        elif manifest_path.is_symlink():
+            no_go_reasons.append("backup manifest is a symlink")
         else:
             manifest = read_json_object(manifest_path)
+            manifest_output_dir = manifest.get("output_dir")
+            if isinstance(manifest_output_dir, str):
+                if Path(manifest_output_dir).expanduser().resolve() != root:
+                    no_go_reasons.append("backup manifest output_dir does not match audited backup directory")
+            else:
+                no_go_reasons.append("backup manifest output_dir is missing")
             if manifest.get("ok") is not True:
                 no_go_reasons.append("backup manifest ok is not true")
             manifest_reasons = manifest.get("no_go_reasons")
@@ -55,13 +78,21 @@ def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
             if not isinstance(file_entries, list):
                 no_go_reasons.append("backup manifest files are missing")
             else:
+                seen_names: set[str] = set()
                 for entry in file_entries:
                     if isinstance(entry, dict):
+                        name = str(entry.get("name") or "")
+                        if name in seen_names:
+                            no_go_reasons.append(f"duplicate backup file entry: {name}")
+                        seen_names.add(name)
+                        if name and name not in EXPECTED_FILE_ENTRY_NAMES:
+                            no_go_reasons.append(f"unexpected backup file entry: {name}")
                         result = audit_file_entry(root, entry)
                         file_results.append(result)
                         no_go_reasons.extend(result["no_go_reasons"])
                     else:
                         no_go_reasons.append("backup manifest contains a non-object file entry")
+        no_go_reasons.extend(audit_directory_contents(root, file_results))
 
     required_names = {result["name"] for result in file_results if result.get("required")}
     for name in ("status.json", "sync-state.json", "launchagent.plist"):
@@ -86,19 +117,25 @@ def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     path = Path(path_value).expanduser() if isinstance(path_value, str) else root / name
     if not path.is_absolute():
         path = root / path
-    path = path.resolve()
+    resolved_path = path.resolve()
 
     expected_exists = entry.get("exists") is True
     required = entry.get("required") is True
     details: dict[str, Any] = {
         "name": name,
-        "path": str(path),
+        "path": str(resolved_path),
         "required": required,
         "expected_exists": expected_exists,
         "exists": path.is_file(),
     }
     if not name:
         reasons.append("backup file entry name is missing")
+    if not is_relative_to(resolved_path, root):
+        reasons.append(f"backup file path is outside backup directory: {name}")
+        return {**details, "no_go_reasons": reasons}
+    if path.is_symlink():
+        reasons.append(f"backup file is a symlink: {name}")
+        return {**details, "no_go_reasons": reasons}
     if not path.is_file():
         if expected_exists or required:
             reasons.append(f"backup file is missing: {name}")
@@ -119,6 +156,26 @@ def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     if required and not isinstance(expected_checksum, str):
         reasons.append(f"required backup file checksum is missing: {name}")
     return {**details, "no_go_reasons": reasons}
+
+
+def audit_directory_contents(root: Path, file_results: list[dict[str, Any]]) -> list[str]:
+    expected_names = {Path(str(result["path"])).name for result in file_results if result.get("path")}
+    allowed_names = expected_names | ALLOWED_UNRECORDED_NAMES
+    reasons: list[str] = []
+    for child in sorted(root.iterdir(), key=lambda path: path.name):
+        if child.name not in allowed_names:
+            reasons.append(f"unexpected backup directory entry: {child.name}")
+        elif child.name in ALLOWED_UNRECORDED_NAMES and child.is_symlink():
+            reasons.append(f"unrecorded backup file is a symlink: {child.name}")
+    return reasons
+
+
+def is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def read_json_object(path: Path) -> dict[str, Any]:

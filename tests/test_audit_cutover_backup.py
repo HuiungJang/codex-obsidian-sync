@@ -30,6 +30,28 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertTrue(report["ok"], report["no_go_reasons"])
         self.assertEqual(report["no_go_reasons"], [])
 
+    def test_allows_live_capture_stderr_files(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            (backup_dir / "status.stderr").write_text("", encoding="utf-8")
+            (backup_dir / "launchctl-print.stderr").write_text("", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report["ok"], report["no_go_reasons"])
+
     def test_fails_when_required_file_checksum_changes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
             backup_dir = create_backup(Path(temp_dir))
@@ -73,6 +95,55 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["ok"])
         self.assertIn("backup file is missing: launchagent.plist", report["no_go_reasons"])
+
+    def test_fails_when_backup_directory_contains_unexpected_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            (backup_dir / "untracked.json").write_text("{}\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("unexpected backup directory entry: untracked.json", report["no_go_reasons"])
+
+    def test_fails_when_manifest_file_path_points_outside_backup_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            manifest_path = backup_dir / "backup-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for entry in manifest["files"]:
+                if entry["name"] == "sync-state.json":
+                    entry["path"] = entry["source"]
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("backup file path is outside backup directory: sync-state.json", report["no_go_reasons"])
 
 
 def create_backup(root: Path) -> Path:
