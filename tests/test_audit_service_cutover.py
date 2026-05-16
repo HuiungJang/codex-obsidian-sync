@@ -36,6 +36,7 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertEqual(report["snapshots"]["pre"]["launchctl_label"], "com.codex.obsidian-sync")
         self.assertEqual(report["snapshots"]["pre"]["launchctl_state"], "running")
         self.assertEqual(report["snapshots"]["pre"]["status_config_path"], "/tmp/config.toml")
+        self.assertEqual(report["snapshots"]["pre"]["last_summary"]["processed"], 1)
         self.assertFalse(report["snapshots"]["stopped"]["launchd_loaded"])
         self.assertIsNone(report["snapshots"]["stopped"]["launchctl_label"])
         self.assertIsNone(report["snapshots"]["stopped"]["launchctl_state"])
@@ -522,6 +523,42 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("pre: last_success is missing or invalid", report["no_go_reasons"])
 
+    def test_fails_when_last_summary_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            status = json.loads(files["post_status"].read_text(encoding="utf-8"))
+            status["last_summary"] = {}
+            files["post_status"].write_text(json.dumps(status) + "\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: last_summary is missing", report["no_go_reasons"])
+
+    def test_fails_when_last_summary_field_is_malformed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            status = json.loads(files["post_status"].read_text(encoding="utf-8"))
+            status["last_summary"]["processed"] = "1"
+            del status["last_summary"]["duration_ms"]
+            files["post_status"].write_text(json.dumps(status) + "\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: last_summary processed is not a non-negative integer", report["no_go_reasons"])
+        self.assertIn("post: last_summary duration_ms is missing", report["no_go_reasons"])
+
     def test_fails_when_last_success_is_timezone_naive(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)
@@ -736,6 +773,18 @@ def write_status(
                 "config_path": config_path,
                 "last_success": "2026-05-16T00:05:00+00:00",
                 "last_error": "none",
+                "last_summary": {
+                    "processed": 1,
+                    "appended": 0,
+                    "rewritten": 1,
+                    "skipped_subagents": 0,
+                    "skipped_invalid": 0,
+                    "unchanged": 0,
+                    "total_rollouts": 1,
+                    "paused": 0,
+                    "fast_path": 0,
+                    "duration_ms": 12,
+                },
             }
         )
         + "\n",

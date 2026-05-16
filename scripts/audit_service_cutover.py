@@ -10,6 +10,18 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_LABEL = "com.codex.obsidian-sync"
+SYNC_SUMMARY_FIELDS = (
+    "processed",
+    "appended",
+    "rewritten",
+    "skipped_subagents",
+    "skipped_invalid",
+    "unchanged",
+    "total_rollouts",
+    "paused",
+    "fast_path",
+    "duration_ms",
+)
 
 
 def main() -> int:
@@ -165,6 +177,7 @@ def audit_service_cutover(
             post_launchagent_config_path=post_config_path,
         )
     )
+    no_go_reasons.extend(validate_last_summaries(pre_status, stopped_status, post_status))
     no_go_reasons.extend(validate_last_success_progression(pre_status, stopped_status, post_status))
     if expected_python_program_arg0 == expected_rust_program_arg0:
         no_go_reasons.append("expected Python and Rust binaries must differ")
@@ -373,6 +386,34 @@ def validate_last_success_progression(
     return reasons
 
 
+def validate_last_summaries(
+    pre_status: dict[str, Any],
+    stopped_status: dict[str, Any],
+    post_status: dict[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    for name, status in {
+        "pre": pre_status,
+        "stopped": stopped_status,
+        "post": post_status,
+    }.items():
+        summary = status.get("last_summary")
+        if not isinstance(summary, dict) or not summary:
+            reasons.append(f"{name}: last_summary is missing")
+            continue
+        for field in SYNC_SUMMARY_FIELDS:
+            value = summary.get(field)
+            if field not in summary:
+                reasons.append(f"{name}: last_summary {field} is missing")
+            elif not is_non_negative_int(value):
+                reasons.append(f"{name}: last_summary {field} is not a non-negative integer")
+    return reasons
+
+
+def is_non_negative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def parse_iso_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -406,6 +447,7 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
         "service_command": program_arguments[-1] if program_arguments else None,
         "last_success": status.get("last_success"),
         "last_error": status.get("last_error"),
+        "last_summary": status.get("last_summary"),
     }
 
 
@@ -421,6 +463,7 @@ def stopped_snapshot_summary(status: dict[str, Any], launchctl: str) -> dict[str
         "status_config_path": status.get("config_path"),
         "last_success": status.get("last_success"),
         "last_error": status.get("last_error"),
+        "last_summary": status.get("last_summary"),
     }
 
 
