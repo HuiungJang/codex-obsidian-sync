@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import shutil
 import subprocess
@@ -112,6 +113,39 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
+    def test_rejects_tarball_member_path_traversal(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_tarball_with_file(root, "../escape")
+            checksum = write_checksum(tarball)
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = run_smoke(tarball=tarball, checksum=checksum, work_dir=work_dir)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unsafe tar member path", result.stderr)
+                self.assertFalse((work_dir / "escape").exists())
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+    def test_rejects_tarball_symlink_member(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_tarball_with_symlink(root)
+            checksum = write_checksum(tarball)
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = run_smoke(tarball=tarball, checksum=checksum, work_dir=work_dir)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unsupported tar member type", result.stderr)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
     def test_rejects_symlinked_tarball(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
             root = Path(temp_dir)
@@ -178,6 +212,26 @@ def write_release_tarball(root: Path) -> Path:
     tarball = root / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
     with tarfile.open(tarball, "w:gz") as archive:
         archive.add(binary, arcname="codex-obsidian-sync-aarch64-apple-darwin/codex-obsidian-sync")
+    return tarball
+
+
+def write_tarball_with_file(root: Path, arcname: str) -> Path:
+    tarball = root / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+    payload = b"unsafe"
+    with tarfile.open(tarball, "w:gz") as archive:
+        info = tarfile.TarInfo(arcname)
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+    return tarball
+
+
+def write_tarball_with_symlink(root: Path) -> Path:
+    tarball = root / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+    with tarfile.open(tarball, "w:gz") as archive:
+        info = tarfile.TarInfo("codex-obsidian-sync-aarch64-apple-darwin/codex-obsidian-sync")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "/tmp/codex-obsidian-sync"
+        archive.addfile(info)
     return tarball
 
 
