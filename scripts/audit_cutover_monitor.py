@@ -178,6 +178,8 @@ def validate_record(
         reasons.append(f"{expected_checkpoint}: service command is not service-run")
     if expected_program_arg0 and record.get("program_arg0") != expected_program_arg0:
         reasons.append(f"{expected_checkpoint}: ProgramArguments[0] does not match expected binary")
+    if record.get("program_arguments_count") != 4:
+        reasons.append(f"{expected_checkpoint}: ProgramArguments count is not the Rust launchd shape")
     config_path = record.get("config_path")
     if not isinstance(config_path, str) or not config_path:
         reasons.append(f"{expected_checkpoint}: config_path is missing")

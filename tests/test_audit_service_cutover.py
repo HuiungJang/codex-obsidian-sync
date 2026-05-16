@@ -109,6 +109,29 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("post: LaunchAgent --config path is not absolute", report["no_go_reasons"])
 
+    def test_fails_when_post_plist_has_extra_argument_before_service_run(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            write_plist(
+                files["post_plist"],
+                rust_binary,
+                label="com.codex.obsidian-sync",
+                extra_before_service_run="--unexpected",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "post: Rust LaunchAgent ProgramArguments must be exactly binary, --config, config path, service-run",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_pre_and_post_config_paths_differ(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)
@@ -404,12 +427,15 @@ def write_plist(
     *,
     label: str,
     extra_argument: str | None = None,
+    extra_before_service_run: str | None = None,
     config_path: str = "/tmp/config.toml",
     include_config: bool = True,
 ) -> None:
     program_arguments = [program_arg0]
     if include_config:
         program_arguments.extend(["--config", config_path])
+    if extra_before_service_run is not None:
+        program_arguments.append(extra_before_service_run)
     program_arguments.append("service-run")
     if extra_argument is not None:
         program_arguments.append(extra_argument)

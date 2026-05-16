@@ -140,6 +140,47 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(record["ok"])
         self.assertIn("LaunchAgent --config path is not absolute", record["no_go_reasons"])
 
+    def test_fails_when_plist_has_extra_argument_before_service_run(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0)
+            write_plist(plist_path, expected_binary, extra_before_service_run="--unexpected")
+            launchctl_path.write_text("state = running\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertIn(
+            "Rust LaunchAgent ProgramArguments must be exactly binary, --config, config path, service-run",
+            record["no_go_reasons"],
+        )
+
     def test_fails_when_skipped_invalid_increases(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
             root = Path(temp_dir)
@@ -681,10 +722,13 @@ def write_plist(
     label: str = "com.codex.obsidian-sync",
     config_path: str = "/tmp/config.toml",
     include_config: bool = True,
+    extra_before_service_run: str | None = None,
 ) -> None:
     program_arguments = [program_arg0]
     if include_config:
         program_arguments.extend(["--config", config_path])
+    if extra_before_service_run is not None:
+        program_arguments.append(extra_before_service_run)
     program_arguments.append("service-run")
     path.write_bytes(
         plistlib.dumps(

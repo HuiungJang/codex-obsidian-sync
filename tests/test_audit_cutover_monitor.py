@@ -231,6 +231,32 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("LaunchAgent --config path changed across monitor records", report["no_go_reasons"])
 
+    def test_fails_when_record_program_arguments_count_is_not_rust_shape(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, program_arguments_counts={"+4h": 5})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+4h: ProgramArguments count is not the Rust launchd shape", report["no_go_reasons"])
+
     def test_fails_when_recorded_at_regresses(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
             root = Path(temp_dir)
@@ -490,6 +516,7 @@ def write_records(
     last_successes: dict[str, str] | None = None,
     counter_overrides: dict[str, dict[str, object]] | None = None,
     config_paths: dict[str, str | None] | None = None,
+    program_arguments_counts: dict[str, int] | None = None,
 ) -> None:
     omit = omit or set()
     failed = failed or set()
@@ -499,6 +526,7 @@ def write_records(
     last_successes = last_successes or {}
     counter_overrides = counter_overrides or {}
     config_paths = config_paths or {}
+    program_arguments_counts = program_arguments_counts or {}
     checkpoints = {
         "+5m": ("plus5m.json", "2026-05-16T00:05:00+00:00"),
         "+1h": ("plus1h.json", "2026-05-16T01:00:00+00:00"),
@@ -523,6 +551,7 @@ def write_records(
             "launchd_loaded": True,
             "launchctl_loaded": True,
             "program_arg0": expected_binary,
+            "program_arguments_count": program_arguments_counts.get(checkpoint, 4),
             "service_command": "service-run",
             "last_success": last_successes.get(checkpoint, last_success),
             "last_error": "boom" if is_failed else "none",

@@ -183,6 +183,8 @@ def validate_loaded_snapshot(
         if program_arguments[-1] != "service-run":
             reasons.append(f"{name}: LaunchAgent does not end with service-run")
         validate_config_argument(program_arguments, name, reasons)
+        if name == "post":
+            validate_rust_program_arguments_shape(program_arguments, name, reasons)
     return reasons
 
 
@@ -300,6 +302,13 @@ def validate_config_argument(program_arguments: list[str], name: str, reasons: l
     config_path = program_arguments[config_index + 1]
     if not Path(config_path).is_absolute():
         reasons.append(f"{name}: LaunchAgent --config path is not absolute")
+
+
+def validate_rust_program_arguments_shape(program_arguments: list[str], name: str, reasons: list[str]) -> None:
+    if len(program_arguments) != 4 or program_arguments[1] != "--config" or program_arguments[3] != "service-run":
+        reasons.append(
+            f"{name}: Rust LaunchAgent ProgramArguments must be exactly binary, --config, config path, service-run"
+        )
 
 
 def config_argument_path(program_arguments: list[str]) -> str | None:

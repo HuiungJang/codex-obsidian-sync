@@ -234,6 +234,7 @@ def build_record(
         if program_arguments[-1] != "service-run":
             no_go_reasons.append("LaunchAgent does not end with service-run")
         validate_config_argument(program_arguments, no_go_reasons)
+        validate_rust_program_arguments_shape(program_arguments, no_go_reasons)
     for field, value in summary_counters.items():
         if value is None:
             no_go_reasons.append(f"last_summary {field} is missing or not a non-negative integer")
@@ -355,6 +356,11 @@ def validate_config_argument(program_arguments: list[str], reasons: list[str]) -
     config_path = program_arguments[config_index + 1]
     if not Path(config_path).is_absolute():
         reasons.append("LaunchAgent --config path is not absolute")
+
+
+def validate_rust_program_arguments_shape(program_arguments: list[str], reasons: list[str]) -> None:
+    if len(program_arguments) != 4 or program_arguments[1] != "--config" or program_arguments[3] != "service-run":
+        reasons.append("Rust LaunchAgent ProgramArguments must be exactly binary, --config, config path, service-run")
 
 
 def config_argument_path(program_arguments: list[str]) -> str | None:
