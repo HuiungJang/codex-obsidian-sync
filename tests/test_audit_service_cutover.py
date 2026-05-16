@@ -502,6 +502,20 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("evidence file is a symlink", result.stderr)
 
+    def test_refuses_duplicate_evidence_file_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            files["post_launchctl"] = files["pre_launchctl"]
+
+            result = run_audit(files, python_binary, rust_binary)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("duplicate evidence file paths", result.stderr)
+        self.assertIn("pre-launchctl-print-file and post-launchctl-print-file", result.stderr)
+
 
 def run_audit(files: dict[str, Path], python_binary: str, rust_binary: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(

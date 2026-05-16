@@ -33,6 +33,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="Write the cutover audit report to this path.")
     args = parser.parse_args()
 
+    reject_duplicate_evidence_paths(args)
     try:
         result = audit_service_cutover(
             pre_status=read_json_object(args.pre_status_json_file),
@@ -64,6 +65,30 @@ def resolve_output_path(path: Path | None) -> Path | None:
     if output.is_symlink():
         raise RuntimeError(f"output path is a symlink: {output}")
     return output
+
+
+def reject_duplicate_evidence_paths(args: argparse.Namespace) -> None:
+    evidence_paths = {
+        "pre-status-json-file": args.pre_status_json_file,
+        "pre-plist-file": args.pre_plist_file,
+        "pre-launchctl-print-file": args.pre_launchctl_print_file,
+        "stopped-status-json-file": args.stopped_status_json_file,
+        "stopped-launchctl-print-file": args.stopped_launchctl_print_file,
+        "post-status-json-file": args.post_status_json_file,
+        "post-plist-file": args.post_plist_file,
+        "post-launchctl-print-file": args.post_launchctl_print_file,
+    }
+    seen: dict[Path, str] = {}
+    duplicates: list[str] = []
+    for label, path in evidence_paths.items():
+        resolved = path.expanduser().resolve()
+        previous = seen.get(resolved)
+        if previous is None:
+            seen[resolved] = label
+        else:
+            duplicates.append(f"{previous} and {label} share {resolved}")
+    if duplicates:
+        raise RuntimeError("duplicate evidence file paths: " + "; ".join(duplicates))
 
 
 def invalid_evidence_result(args: argparse.Namespace, error: Exception) -> dict[str, Any]:
