@@ -75,6 +75,8 @@ jobs:
             --checksum "dist/codex-obsidian-sync-${{ matrix.target }}.tar.gz.sha256" \
             --expected-version "${version}" \
             --work-dir "/tmp/codex-obsidian-sync-release-smoke-${{ matrix.target }}"
+          cp "/tmp/codex-obsidian-sync-release-smoke-${{ matrix.target }}/smoke-summary.json" \
+            "dist/codex-obsidian-sync-${{ matrix.target }}.smoke-summary.json"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -83,6 +85,7 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.sha256
+            dist/*.smoke-summary.json
           if-no-files-found: error
 
   release:
@@ -134,3 +137,8 @@ jobs:
             --formula dist/codex-obsidian-sync.rb \
             --expected-version "${GITHUB_REF_NAME}" \
             --output dist/homebrew-smoke-summary.json
+
+      - name: Publish smoke summaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/*smoke-summary.json --clobber
