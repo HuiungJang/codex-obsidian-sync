@@ -566,6 +566,19 @@ class AuditPublishedReleaseTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("download path is a symlink", result["no_go_reasons"][0])
 
+    def test_refuses_symlinked_output_report_path(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            output_target = root / "target-report.json"
+            output = root / "published-release-audit.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            with self.assertRaisesRegex(RuntimeError, "output path is a symlink"):
+                audit_published_release.resolve_output_path(output)
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
+
 
 class FakeGitHubOpener:
     def __init__(
