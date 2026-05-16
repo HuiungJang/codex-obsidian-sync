@@ -230,6 +230,9 @@ def build_record(
     launchctl_label_seen = launchctl_contains_label(launchctl, expected_label)
     if launchctl_loaded and not launchctl_label_seen:
         no_go_reasons.append("launchctl print did not include expected label")
+    launchctl_state_value = launchctl_state(launchctl)
+    if launchctl_loaded and launchctl_state_value != "running":
+        no_go_reasons.append("launchctl print state is not running")
     if status.get("last_error") not in (None, "none", "never run"):
         no_go_reasons.append(f"last_error is {status.get('last_error')}")
     if expected_program_arg0 and (not program_arguments or program_arguments[0] != expected_program_arg0):
@@ -273,6 +276,7 @@ def build_record(
         "plist_label": plist_label,
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": launchctl_loaded,
+        "launchctl_state": launchctl_state_value,
         "launchctl_label_seen": launchctl_label_seen,
         "status_config_path": status_config_path,
         "plist_path": status_plist_path,
@@ -438,6 +442,11 @@ def looks_loaded(launchctl: str) -> bool:
 def launchctl_contains_label(launchctl: str, expected_label: str) -> bool:
     label_pattern = re.escape(expected_label)
     return re.search(rf"(^|[\s/]){label_pattern}(?=\s*(=|\{{|$))", launchctl) is not None
+
+
+def launchctl_state(launchctl: str) -> str | None:
+    match = re.search(r"(?im)^[ \t]*state[ \t]*=[ \t]*([A-Za-z0-9_.-]+)[ \t]*$", launchctl)
+    return match.group(1).lower() if match else None
 
 
 def sanitize_checkpoint(value: str) -> str:
