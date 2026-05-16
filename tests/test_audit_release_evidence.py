@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -467,6 +468,38 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_dir_contains_unexpected_directory(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            (release_dir / "scratch").mkdir()
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release directory contents: release directory contains unexpected directories: ['scratch']",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_dir_contains_symlinked_artifact(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             root = Path(temp_dir)
@@ -595,6 +628,7 @@ def write_release_artifacts(release_dir: Path) -> dict[str, str]:
         binary.chmod(0o755)
         with tarfile.open(package, "w:gz") as archive:
             archive.add(binary, arcname=f"codex-obsidian-sync-{target}/codex-obsidian-sync")
+        shutil.rmtree(source_dir)
         checksum = hashlib.sha256(package.read_bytes()).hexdigest()
         checksums[target] = checksum
         (release_dir / f"{package_name}.sha256").write_text(f"{checksum}  {package_name}\n", encoding="utf-8")

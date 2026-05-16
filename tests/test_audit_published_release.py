@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
 import tarfile
 import unittest
@@ -332,6 +333,7 @@ def write_release_artifacts(release_dir: Path) -> dict[str, str]:
         binary.chmod(0o755)
         with tarfile.open(package, "w:gz") as archive:
             archive.add(binary, arcname=f"codex-obsidian-sync-{target}/codex-obsidian-sync")
+        shutil.rmtree(source_dir)
         checksum = hashlib.sha256(package.read_bytes()).hexdigest()
         checksums[target] = checksum
         (release_dir / f"{package_name}.sha256").write_text(f"{checksum}  {package_name}\n", encoding="utf-8")

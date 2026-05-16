@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import plistlib
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -614,6 +615,60 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_dir_contains_unexpected_directory(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary))
+            (release_dir / "scratch").mkdir()
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "release directory contents: release directory contains unexpected directories: ['scratch']",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_dir_contains_symlinked_artifact(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
             root = Path(temp_dir)
@@ -904,6 +959,7 @@ def write_release_artifacts(release_dir: Path) -> dict[str, str]:
         binary.chmod(0o755)
         with tarfile.open(package, "w:gz") as archive:
             archive.add(binary, arcname=f"codex-obsidian-sync-{target}/codex-obsidian-sync")
+        shutil.rmtree(source_dir)
         checksum = hashlib.sha256(package.read_bytes()).hexdigest()
         checksums[target] = checksum
         (release_dir / f"{package_name}.sha256").write_text(f"{checksum}  {package_name}\n", encoding="utf-8")
