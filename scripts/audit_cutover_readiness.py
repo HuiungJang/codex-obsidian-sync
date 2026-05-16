@@ -545,11 +545,22 @@ def audit_monitor_dir(monitor_dir: Path) -> dict[str, Any]:
 
     record_count = 0
     record_names: list[str] = []
+    unexpected_entry_names: list[str] = []
+    symlink_names: list[str] = []
     failed_records: list[str] = []
     if path.exists():
         marker = path / MONITOR_MARKER
-        if marker.exists() and marker.read_text(encoding="utf-8") != MONITOR_MARKER_CONTENT:
+        if marker.is_symlink():
+            reasons.append("monitor dir marker is a symlink")
+        elif marker.exists() and marker.read_text(encoding="utf-8") != MONITOR_MARKER_CONTENT:
             reasons.append("monitor dir marker content is not managed by record_cutover_monitor.py")
+        for entry in sorted(path.iterdir(), key=lambda candidate: candidate.name):
+            if entry.name == MONITOR_MARKER:
+                continue
+            if entry.is_symlink():
+                symlink_names.append(entry.name)
+            if entry.suffix != ".json":
+                unexpected_entry_names.append(entry.name)
         for record_path in sorted(path.glob("*.json")):
             record_names.append(record_path.name)
             record_count += 1
@@ -561,9 +572,15 @@ def audit_monitor_dir(monitor_dir: Path) -> dict[str, Any]:
                 failed_records.append(record_path.name)
     details["existing_record_count"] = record_count
     details["existing_records"] = record_names
+    details["unexpected_entries"] = unexpected_entry_names
+    details["symlinks"] = symlink_names
     details["failed_records"] = failed_records
     if record_names:
         reasons.append(f"monitor dir already contains JSON records: {record_names}")
+    if unexpected_entry_names:
+        reasons.append(f"monitor dir contains unexpected entries: {unexpected_entry_names}")
+    if symlink_names:
+        reasons.append(f"monitor dir contains symlinks: {symlink_names}")
     if failed_records:
         reasons.append(f"existing monitor records contain no-go results: {failed_records}")
 
