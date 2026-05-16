@@ -3,6 +3,10 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -11,7 +15,7 @@ use crate::error::SyncError;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SyncState {
     #[serde(default)]
-    pub files: BTreeMap<String, StateEntry>,
+    pub files: IndexMap<String, StateEntry>,
 
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -35,6 +39,24 @@ pub struct FileFingerprint {
     pub mtime_ns: u64,
 }
 
+impl StateEntry {
+    pub fn bool_field(&self, key: &str) -> Option<bool> {
+        self.extra.get(key).and_then(Value::as_bool)
+    }
+
+    pub fn string_field(&self, key: &str) -> Option<&str> {
+        self.extra.get(key).and_then(Value::as_str)
+    }
+}
+
+pub fn file_fingerprint(path: &Path) -> Result<FileFingerprint, SyncError> {
+    let metadata = fs::metadata(path).map_err(|_| SyncError::Discovery)?;
+    Ok(FileFingerprint {
+        size: metadata.len(),
+        mtime_ns: metadata_mtime_ns(&metadata),
+    })
+}
+
 pub fn load_state_read_only(path: &Path) -> Result<SyncState, SyncError> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
@@ -49,6 +71,23 @@ pub fn load_state_read_only(path: &Path) -> Result<SyncState, SyncError> {
 pub fn render_temp_state(state: &SyncState) -> Result<String, SyncError> {
     let content = serde_json::to_string_pretty(state).map_err(|_| SyncError::Render)?;
     Ok(format!("{content}\n"))
+}
+
+#[cfg(unix)]
+fn metadata_mtime_ns(metadata: &fs::Metadata) -> u64 {
+    (metadata.mtime() as u64)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(metadata.mtime_nsec() as u64)
+}
+
+#[cfg(not(unix))]
+fn metadata_mtime_ns(metadata: &fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 fn validate_state(state: &SyncState) -> Result<(), SyncError> {
