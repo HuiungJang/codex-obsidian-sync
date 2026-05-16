@@ -166,6 +166,37 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_processed_is_not_positive(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir, processed=0)
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke processed is not positive",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_version_command_output_does_not_match(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -839,6 +870,37 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "homebrew smoke summary: Homebrew smoke vault_unchanged is not true",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_homebrew_smoke_processed_is_not_positive(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula, processed=0)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke processed is not positive",
             report["no_go_reasons"],
         )
 
@@ -1899,6 +1961,7 @@ def write_release_smoke_summaries(
     installed_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
     tarball_sha256: str | None = None,
     checksum_sha256: str | None = None,
+    processed: int = 1,
 ) -> None:
     for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
         tarball = release_dir / f"codex-obsidian-sync-{target}.tar.gz"
@@ -1918,7 +1981,7 @@ def write_release_smoke_summaries(
                     "status_json_parsed": True,
                     "inspect_count": 1,
                     "dry_run": True,
-                    "processed": 1,
+                    "processed": processed,
                     "vault_unchanged": True,
                     "uninstalled": not installed_after,
                     "installed_after": installed_after,
@@ -1983,6 +2046,7 @@ def write_homebrew_smoke_summary(
     brew_command: str = "brew",
     recorded_brew: str | None = None,
     prefix_stdout: str = "/tmp/codex-obsidian-sync\n",
+    processed: int = 1,
 ) -> None:
     formula_path = str(formula.resolve())
     install_formula_path = install_formula or formula_path
@@ -1998,6 +2062,7 @@ def write_homebrew_smoke_summary(
         "status_configured": True,
         "status_json_parsed": True,
         "dry_run": True,
+        "processed": processed,
         "vault_unchanged": vault_unchanged,
         "note_files": 1,
         "commands": [

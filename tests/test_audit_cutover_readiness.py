@@ -1614,6 +1614,7 @@ def write_homebrew_smoke_summary(
                 "status_configured": True,
                 "status_json_parsed": True,
                 "dry_run": True,
+                "processed": 1,
                 "vault_unchanged": True,
                 "note_files": 1,
                 "commands": [

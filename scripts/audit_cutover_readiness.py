@@ -436,6 +436,7 @@ def audit_release_smoke_summary(
             "status_configured": summary.get("status_configured"),
             "status_json_parsed": summary.get("status_json_parsed"),
             "dry_run": summary.get("dry_run"),
+            "processed": summary.get("processed"),
             "vault_unchanged": summary.get("vault_unchanged"),
             "uninstalled": summary.get("uninstalled"),
             "installed_after": summary.get("installed_after"),
@@ -478,6 +479,8 @@ def audit_release_smoke_summary(
         reasons.append("release smoke did not prove the artifact install was removed")
     if not positive_int(summary.get("inspect_count")):
         reasons.append("release smoke inspect_count is not positive")
+    if not positive_int(summary.get("processed")):
+        reasons.append("release smoke processed is not positive")
     if not positive_int(summary.get("note_files")):
         reasons.append("release smoke note_files is not positive")
     if not isinstance(installed_binary, str) or not installed_binary:
@@ -549,6 +552,7 @@ def audit_homebrew_smoke_summary(
             "status_configured": summary.get("status_configured"),
             "status_json_parsed": summary.get("status_json_parsed"),
             "dry_run": summary.get("dry_run"),
+            "processed": summary.get("processed"),
             "vault_unchanged": summary.get("vault_unchanged"),
             "note_files": summary.get("note_files"),
             "summary_no_go_reasons": summary.get("no_go_reasons"),
@@ -583,6 +587,8 @@ def audit_homebrew_smoke_summary(
     for field in ("status_configured", "status_json_parsed", "dry_run", "vault_unchanged"):
         if summary.get(field) is not True:
             reasons.append(f"Homebrew smoke {field} is not true")
+    if not positive_int(summary.get("processed")):
+        reasons.append("Homebrew smoke processed is not positive")
     if not positive_int(summary.get("note_files")):
         reasons.append("Homebrew smoke note_files is not positive")
     if not isinstance(installed_binary, str) or not installed_binary:
