@@ -253,6 +253,16 @@ pre-cutover LaunchAgent binary까지 고정해서 확인하려면 현재 plist�
 서비스 전환 시에는 stop/start 전후 증거를 파일로 남긴 뒤 `scripts/audit_service_cutover.py`로
 Python service unload와 Rust service load를 판정한다. 이 스크립트는 LaunchAgent를 변경하지 않는다.
 
+실제 서비스 label을 건드리기 전에 임시 label로 launchd 경로만 smoke 할 수 있다. 이 명령은
+`com.codex.obsidian-sync.smoke.<pid>` label과 `/tmp/codex-obsidian-sync-*` runtime만 사용하고,
+마지막에 해당 임시 LaunchAgent를 `bootout` 한다.
+
+```bash
+python3 scripts/smoke_launchagent.py \
+  --binary "$(command -v codex-obsidian-sync)" \
+  --work-dir "/tmp/codex-obsidian-sync-launchagent-smoke"
+```
+
 Rust LaunchAgent cutover 직후에는 아래 checkpoint를 기록한다.
 
 ```bash
