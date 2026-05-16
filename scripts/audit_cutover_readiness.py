@@ -489,11 +489,12 @@ def audit_release_smoke_summary(
     else:
         required_binary_commands = {
             "version": ("--version",),
-            "inspect": ("inspect-recent",),
         }
         for label, sequence in required_binary_commands.items():
             if not has_successful_installed_binary_command(commands, sequence, installed_binary):
                 reasons.append(f"release smoke did not record successful installed binary {label}")
+        if not has_successful_inspect_recent_command(commands, installed_binary):
+            reasons.append("release smoke did not record successful installed binary inspect")
         if not has_successful_configured_status_command(commands, installed_binary):
             reasons.append("release smoke did not record successful installed binary status with --config")
         if not has_successful_configured_sync_command(commands, installed_binary):
@@ -1068,6 +1069,21 @@ def has_successful_configured_status_command(commands: list[Any], expected_binar
             and parts[1] == "--config"
             and Path(parts[2]).is_absolute()
             and parts[3:] == ["status", "--json"]
+        ):
+            return True
+    return False
+
+
+def has_successful_inspect_recent_command(commands: list[Any], expected_binary: Any) -> bool:
+    for parts in successful_expected_binary_commands(commands, expected_binary):
+        if (
+            len(parts) == 6
+            and parts[1] == "inspect-recent"
+            and parts[2] == "--codex-home"
+            and Path(parts[3]).is_absolute()
+            and parts[4] == "--limit"
+            and parts[5].isdecimal()
+            and int(parts[5]) > 0
         ):
             return True
     return False
