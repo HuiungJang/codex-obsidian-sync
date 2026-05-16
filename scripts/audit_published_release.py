@@ -148,6 +148,9 @@ def audit_published_release(
 
         uploaded_evidence_summary = read_uploaded_evidence_summary(destination / RELEASE_EVIDENCE_SUMMARY)
         no_go_reasons.extend(validate_uploaded_evidence_summary(uploaded_evidence_summary, version, tag, repository))
+        no_go_reasons.extend(
+            validate_uploaded_evidence_summary_matches_local_audit(uploaded_evidence_summary, local_evidence_audit)
+        )
     except Exception as error:
         no_go_reasons.append(str(error))
 
@@ -499,6 +502,55 @@ def validate_uploaded_check_details(checks: list[dict[str, Any]], version: str, 
         elif name == "homebrew smoke summary" and details.get("expected_version") != version:
             reasons.append("uploaded release evidence summary Homebrew smoke version does not match requested version")
     return reasons
+
+
+def validate_uploaded_evidence_summary_matches_local_audit(
+    summary: dict[str, Any],
+    local_audit: dict[str, Any],
+) -> list[str]:
+    uploaded_checks = checks_by_name(summary.get("checks"))
+    local_checks = checks_by_name(local_audit.get("checks"))
+    reasons: list[str] = []
+    for name in required_evidence_check_names():
+        uploaded_details = uploaded_checks.get(name, {}).get("details")
+        local_details = local_checks.get(name, {}).get("details")
+        if not isinstance(uploaded_details, dict) or not isinstance(local_details, dict):
+            continue
+        for field in comparable_check_detail_fields(name):
+            if uploaded_details.get(field) != local_details.get(field):
+                reasons.append(f"uploaded release evidence summary check detail mismatch: {name}.{field}")
+    return reasons
+
+
+def checks_by_name(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, list):
+        return {}
+    return {check["name"]: check for check in value if isinstance(check, dict) and isinstance(check.get("name"), str)}
+
+
+def comparable_check_detail_fields(name: str) -> tuple[str, ...]:
+    if name.startswith("release artifact:"):
+        return ("target", "checksum", "checksum_matches")
+    if name == "homebrew formula":
+        return ("version", "repository", "targets")
+    if name.startswith("release smoke summary:"):
+        return (
+            "target",
+            "expected_version",
+            "expected_tarball_sha256",
+            "expected_checksum_sha256",
+            "tarball_sha256",
+            "checksum_sha256",
+        )
+    if name == "homebrew smoke summary":
+        return (
+            "expected_version",
+            "summary_expected_version",
+            "formula_sha256",
+            "expected_formula_sha256",
+            "version",
+        )
+    return ()
 
 
 def release_summary(release: dict[str, Any] | None) -> dict[str, Any] | None:
