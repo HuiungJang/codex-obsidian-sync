@@ -352,6 +352,38 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_release_asset_url_is_outside_requested_repository(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            opener = FakeGitHubOpener(
+                assets,
+                release_assets=[
+                    {
+                        "name": "codex-obsidian-sync-aarch64-apple-darwin.tar.gz",
+                        "url": f"{API_URL}/repos/Other/repo/releases/assets/123",
+                        "size": len(assets["codex-obsidian-sync-aarch64-apple-darwin.tar.gz"]),
+                    },
+                ],
+            )
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "GitHub release has malformed asset metadata: "
+            "codex-obsidian-sync-aarch64-apple-darwin.tar.gz download URL is outside the requested repository",
+            result["no_go_reasons"],
+        )
+
     def test_refuses_non_empty_download_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)
@@ -410,7 +442,7 @@ class FakeGitHubOpener:
     def __call__(self, request: Any) -> "FakeResponse":
         if request.full_url == self.release_url:
             return FakeResponse(json.dumps(self.release_json()).encode("utf-8"))
-        prefix = f"{API_URL}/assets/"
+        prefix = f"{API_URL}/repos/{REPOSITORY}/releases/assets/"
         if request.full_url.startswith(prefix):
             name = request.full_url.removeprefix(prefix)
             if name in self.assets:
@@ -421,7 +453,7 @@ class FakeGitHubOpener:
         release_assets = self.release_assets if self.release_assets is not None else [
             {
                 "name": name,
-                "url": f"{API_URL}/assets/{name}",
+                "url": f"{API_URL}/repos/{REPOSITORY}/releases/assets/{name}",
                 "size": len(payload),
             }
             for name, payload in sorted(self.assets.items())

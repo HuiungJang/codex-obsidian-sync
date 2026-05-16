@@ -102,7 +102,11 @@ def audit_published_release(
         )
         no_go_reasons.extend(validate_release_metadata(release, tag))
 
-        assets = release_assets_by_name(release)
+        assets = release_assets_by_name(
+            release,
+            github_api_url=github_api_url,
+            repository=repository,
+        )
         extra_asset_names = sorted(set(assets) - set(allowed_asset_names()))
         for asset_name in extra_asset_names:
             no_go_reasons.append(f"unexpected release asset: {asset_name}")
@@ -239,11 +243,17 @@ def validate_release_metadata(release: dict[str, Any], tag: str) -> list[str]:
     return reasons
 
 
-def release_assets_by_name(release: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def release_assets_by_name(
+    release: dict[str, Any],
+    *,
+    github_api_url: str,
+    repository: str,
+) -> dict[str, dict[str, Any]]:
     assets = release.get("assets")
     if not isinstance(assets, list):
         raise RuntimeError("GitHub release assets are missing")
 
+    asset_url_prefix = f"{github_api_url.rstrip('/')}/repos/{repository}/releases/assets/"
     by_name: dict[str, dict[str, Any]] = {}
     duplicate_names: set[str] = set()
     malformed_assets: list[str] = []
@@ -258,6 +268,8 @@ def release_assets_by_name(release: dict[str, Any]) -> dict[str, dict[str, Any]]
         asset_url = asset.get("url")
         if not isinstance(asset_url, str) or not asset_url:
             malformed_assets.append(f"{name} is missing a download URL")
+        elif not asset_url.startswith(asset_url_prefix):
+            malformed_assets.append(f"{name} download URL is outside the requested repository")
         size = asset.get("size")
         if not is_non_negative_int(size):
             malformed_assets.append(f"{name} is missing a non-negative size")
