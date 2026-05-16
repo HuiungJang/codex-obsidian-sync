@@ -14,7 +14,7 @@ import tempfile
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 DEFAULT_REPOSITORY = "HuiungJang/codex-obsidian-sync"
@@ -496,10 +496,16 @@ def audit_release_smoke_summary(
         for label, sequence in required_binary_commands.items():
             if not has_successful_installed_binary_command(commands, sequence, installed_binary):
                 reasons.append(f"release smoke did not record successful installed binary {label}")
-        if not has_successful_inspect_recent_command(commands, installed_binary):
+        inspect_items = successful_inspect_recent_output(commands, installed_binary)
+        if inspect_items is None:
             reasons.append("release smoke did not record successful installed binary inspect")
-        if not has_successful_configured_status_command(commands, installed_binary):
+        elif len(inspect_items) != summary.get("inspect_count"):
+            reasons.append("release smoke inspect_count does not match inspect stdout")
+        status_summary = successful_configured_status_summary(commands, installed_binary)
+        if status_summary is None:
             reasons.append("release smoke did not record successful installed binary status with --config")
+        elif status_summary.get("configured") != summary.get("status_configured"):
+            reasons.append("release smoke status_configured does not match status stdout")
         sync_summary = successful_configured_sync_summary(commands, installed_binary)
         if sync_summary is None:
             reasons.append("release smoke did not record parseable installed binary sync summary")
@@ -631,8 +637,11 @@ def audit_homebrew_smoke_summary(
         for label, sequence in required_binary_commands.items():
             if not has_successful_installed_binary_command(commands, sequence, installed_binary):
                 reasons.append(f"Homebrew smoke did not record successful installed binary {label}")
-        if not has_successful_configured_status_command(commands, installed_binary):
+        status_summary = successful_configured_status_summary(commands, installed_binary)
+        if status_summary is None:
             reasons.append("Homebrew smoke did not record successful installed binary status with --config")
+        elif status_summary.get("configured") != summary.get("status_configured"):
+            reasons.append("Homebrew smoke status_configured does not match status stdout")
         sync_summary = successful_configured_sync_summary(commands, installed_binary)
         if sync_summary is None:
             reasons.append("Homebrew smoke did not record parseable installed binary sync summary")
@@ -1133,59 +1142,87 @@ def has_successful_installed_binary_command(
     return False
 
 
-def has_successful_configured_status_command(commands: list[Any], expected_binary: Any) -> bool:
-    for parts in successful_expected_binary_commands(commands, expected_binary):
-        if (
-            len(parts) == 5
-            and parts[1] == "--config"
-            and Path(parts[2]).is_absolute()
-            and parts[3:] == ["status", "--json"]
-        ):
-            return True
-    return False
+def successful_configured_status_summary(commands: list[Any], expected_binary: Any) -> dict[str, Any] | None:
+    for command in commands:
+        value = successful_command_json(
+            command,
+            expected_binary,
+            lambda parts: (
+                len(parts) == 5
+                and parts[1] == "--config"
+                and Path(parts[2]).is_absolute()
+                and parts[3:] == ["status", "--json"]
+            ),
+        )
+        if isinstance(value, dict):
+            return value
+        if value is not None:
+            return None
+    return None
 
 
-def has_successful_inspect_recent_command(commands: list[Any], expected_binary: Any) -> bool:
-    for parts in successful_expected_binary_commands(commands, expected_binary):
-        if (
-            len(parts) == 6
-            and parts[1] == "inspect-recent"
-            and parts[2] == "--codex-home"
-            and Path(parts[3]).is_absolute()
-            and parts[4] == "--limit"
-            and parts[5].isdecimal()
-            and int(parts[5]) > 0
-        ):
-            return True
-    return False
+def successful_inspect_recent_output(commands: list[Any], expected_binary: Any) -> list[Any] | None:
+    for command in commands:
+        value = successful_command_json(
+            command,
+            expected_binary,
+            lambda parts: (
+                len(parts) == 6
+                and parts[1] == "inspect-recent"
+                and parts[2] == "--codex-home"
+                and Path(parts[3]).is_absolute()
+                and parts[4] == "--limit"
+                and parts[5].isdecimal()
+                and int(parts[5]) > 0
+            ),
+        )
+        if isinstance(value, list):
+            return value
+        if value is not None:
+            return None
+    return None
 
 
 def successful_configured_sync_summary(commands: list[Any], expected_binary: Any) -> dict[str, Any] | None:
     for command in commands:
-        if not isinstance(command, dict) or command.get("returncode") != 0:
-            continue
-        command_value = command.get("command")
-        if not isinstance(command_value, list) or not command_value:
-            continue
-        parts = [str(part) for part in command_value]
-        if not (
-            len(parts) == 6
-            and command_uses_expected_binary(parts[0], expected_binary)
-            and parts[1] == "--config"
-            and Path(parts[2]).is_absolute()
-            and parts[3:5] == ["sync-once", "--dry-run-output"]
-            and Path(parts[5]).is_absolute()
-        ):
-            continue
-        stdout = command.get("stdout")
-        if not isinstance(stdout, str):
+        value = successful_command_json(
+            command,
+            expected_binary,
+            lambda parts: (
+                len(parts) == 6
+                and parts[1] == "--config"
+                and Path(parts[2]).is_absolute()
+                and parts[3:5] == ["sync-once", "--dry-run-output"]
+                and Path(parts[5]).is_absolute()
+            ),
+        )
+        if isinstance(value, dict):
+            return value
+        if value is not None:
             return None
-        try:
-            value = json.loads(stdout)
-        except json.JSONDecodeError:
-            return None
-        return value if isinstance(value, dict) else None
     return None
+
+
+def successful_command_json(
+    command: Any,
+    expected_binary: Any,
+    matches: Callable[[list[str]], bool],
+) -> Any:
+    if not isinstance(command, dict) or command.get("returncode") != 0:
+        return None
+    command_value = command.get("command")
+    if not isinstance(command_value, list) or not command_value:
+        return None
+    parts = [str(part) for part in command_value]
+    if not command_uses_expected_binary(parts[0], expected_binary) or not matches(parts):
+        return None
+    stdout = command.get("stdout")
+    if not isinstance(stdout, str):
+        return False
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        return False
 
 
 def successful_expected_binary_commands(commands: list[Any], expected_binary: Any) -> list[list[str]]:

@@ -1561,6 +1561,7 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                                 "--json",
                             ],
                             "returncode": 0,
+                            "stdout": json.dumps({"configured": True}) + "\n",
                         },
                         {
                             "command": [
@@ -1572,6 +1573,7 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                                 "3",
                             ],
                             "returncode": 0,
+                            "stdout": json.dumps([{"id": "session"}]) + "\n",
                         },
                         {
                             "command": [
@@ -1640,6 +1642,7 @@ def write_homebrew_smoke_summary(
                             "--json",
                         ],
                         "returncode": 0,
+                        "stdout": json.dumps({"configured": True}) + "\n",
                     },
                     {
                         "command": [

@@ -632,6 +632,44 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_status_configured_differs_from_status_stdout(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            for command in summary["commands"]:
+                if command["command"][-2:] == ["status", "--json"]:
+                    command["stdout"] = json.dumps({"configured": False}) + "\n"
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: "
+            "release smoke status_configured does not match status stdout",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_inspect_command_omits_codex_home(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -667,6 +705,44 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertIn(
             "release smoke summary:aarch64-apple-darwin: "
             "release smoke did not record successful installed binary inspect",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_release_smoke_inspect_count_differs_from_inspect_stdout(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            for command in summary["commands"]:
+                if "inspect-recent" in command["command"]:
+                    command["stdout"] = json.dumps([{"id": "one"}, {"id": "two"}]) + "\n"
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: "
+            "release smoke inspect_count does not match inspect stdout",
             report["no_go_reasons"],
         )
 
@@ -1518,6 +1594,43 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_homebrew_smoke_status_configured_differs_from_status_stdout(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "homebrew-smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            for command in summary["commands"]:
+                if command["command"][-2:] == ["status", "--json"]:
+                    command["stdout"] = json.dumps({"configured": False}) + "\n"
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke status_configured does not match status stdout",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_dir_contains_unexpected_file(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -2075,6 +2188,7 @@ def write_release_smoke_summaries(
                                 "--json",
                             ],
                             "returncode": 0,
+                            "stdout": json.dumps({"configured": True}) + "\n",
                         },
                         {
                             "command": [
@@ -2086,6 +2200,7 @@ def write_release_smoke_summaries(
                                 "3",
                             ],
                             "returncode": 0,
+                            "stdout": json.dumps([{"id": "session"}]) + "\n",
                         },
                         {
                             "command": [
@@ -2162,6 +2277,7 @@ def write_homebrew_smoke_summary(
                     "--json",
                 ],
                 "returncode": 0,
+                "stdout": json.dumps({"configured": True}) + "\n",
             },
             {
                 "command": [
