@@ -286,6 +286,9 @@ def release_assets_by_name(
         if not isinstance(name, str) or not name.strip():
             malformed_assets.append(f"#{index} is missing a name")
             continue
+        asset_id = asset.get("id")
+        if not is_positive_int(asset_id):
+            malformed_assets.append(f"{name} is missing a positive asset id")
         asset_url = asset.get("url")
         if not isinstance(asset_url, str) or not asset_url:
             malformed_assets.append(f"{name} is missing a download URL")
@@ -293,10 +296,14 @@ def release_assets_by_name(
             malformed_assets.append(f"{name} download URL is outside the requested repository")
         elif not has_single_asset_url_suffix(asset_url, asset_url_prefix):
             malformed_assets.append(f"{name} download URL has an invalid asset id")
+        elif is_positive_int(asset_id) and asset_url != f"{asset_url_prefix}{asset_id}":
+            malformed_assets.append(f"{name} download URL does not match asset id")
         elif asset_url in seen_asset_urls:
             duplicate_asset_url_pairs.append(f"{seen_asset_urls[asset_url]} and {name} share {asset_url}")
         else:
             seen_asset_urls[asset_url] = name
+        if asset.get("state") != "uploaded":
+            malformed_assets.append(f"{name} asset state is not uploaded")
         browser_download_url = asset.get("browser_download_url")
         expected_browser_download_url = f"{browser_download_prefix}{name}"
         if not isinstance(browser_download_url, str) or not browser_download_url:
@@ -370,6 +377,10 @@ def download_asset(
 
 def is_non_negative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def read_uploaded_evidence_summary(path: Path) -> dict[str, Any]:
