@@ -531,24 +531,47 @@ def checks_by_name(value: Any) -> dict[str, dict[str, Any]]:
 def comparable_check_detail_fields(name: str) -> tuple[str, ...]:
     if name.startswith("release artifact:"):
         return ("target", "checksum", "checksum_matches")
+    if name == "release directory contents":
+        return ("expected_files", "symlinks", "unexpected_files", "unexpected_directories")
     if name == "homebrew formula":
         return ("version", "repository", "targets")
     if name.startswith("release smoke summary:"):
         return (
             "target",
             "expected_version",
+            "version",
             "expected_tarball_sha256",
             "expected_checksum_sha256",
             "tarball_sha256",
             "checksum_sha256",
+            "installed_binary",
+            "status_configured",
+            "status_json_parsed",
+            "dry_run",
+            "vault_unchanged",
+            "uninstalled",
+            "installed_after",
+            "inspect_count",
+            "note_files",
+            "command_count",
         )
     if name == "homebrew smoke summary":
         return (
             "expected_version",
             "summary_expected_version",
+            "brew",
             "formula_sha256",
             "expected_formula_sha256",
             "version",
+            "installed_binary",
+            "homebrew_prefix",
+            "installed_after",
+            "status_configured",
+            "status_json_parsed",
+            "dry_run",
+            "vault_unchanged",
+            "note_files",
+            "command_count",
         )
     return ()
 
