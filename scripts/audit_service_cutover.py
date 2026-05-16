@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import plistlib
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -171,6 +172,8 @@ def validate_loaded_snapshot(
     )
     if not looks_loaded(launchctl):
         reasons.append(f"{name}: launchctl print did not return a loaded service")
+    elif not launchctl_contains_label(launchctl, expected_label):
+        reasons.append(f"{name}: launchctl print did not include expected label")
     if status.get("last_error") not in (None, "none", "never run"):
         reasons.append(f"{name}: last_error is {status.get('last_error')}")
     if not program_arguments:
@@ -183,7 +186,9 @@ def validate_loaded_snapshot(
         if program_arguments[-1] != "service-run":
             reasons.append(f"{name}: LaunchAgent does not end with service-run")
         validate_config_argument(program_arguments, name, reasons)
-        if name == "post":
+        if name == "pre":
+            validate_python_program_arguments_shape(program_arguments, name, reasons)
+        elif name == "post":
             validate_rust_program_arguments_shape(program_arguments, name, reasons)
     return reasons
 
@@ -238,6 +243,8 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),
+        "program_arguments": program_arguments,
+        "program_arguments_count": len(program_arguments),
         "program_arg0": program_arguments[0] if program_arguments else None,
         "config_path": config_argument_path(program_arguments),
         "service_command": program_arguments[-1] if program_arguments else None,
@@ -272,6 +279,11 @@ def looks_loaded(launchctl: str) -> bool:
     return not any(marker in lowered for marker in unloaded_markers)
 
 
+def launchctl_contains_label(launchctl: str, expected_label: str) -> bool:
+    label_pattern = re.escape(expected_label)
+    return re.search(rf"(^|[\s/]){label_pattern}(?=\s*(=|\{{|$))", launchctl) is not None
+
+
 def validated_program_arguments(value: Any, name: str, reasons: list[str]) -> list[str]:
     if value is None:
         return []
@@ -302,6 +314,20 @@ def validate_config_argument(program_arguments: list[str], name: str, reasons: l
     config_path = program_arguments[config_index + 1]
     if not Path(config_path).is_absolute():
         reasons.append(f"{name}: LaunchAgent --config path is not absolute")
+
+
+def validate_python_program_arguments_shape(program_arguments: list[str], name: str, reasons: list[str]) -> None:
+    script_shape = len(program_arguments) == 4 and program_arguments[1] == "--config"
+    module_shape = (
+        len(program_arguments) == 6
+        and program_arguments[1:4] == ["-m", "codex_obsidian_sync.cli", "--config"]
+        and program_arguments[5] == "service-run"
+    )
+    if not script_shape and not module_shape:
+        reasons.append(
+            f"{name}: Python LaunchAgent ProgramArguments must be either binary, --config, config path, service-run "
+            "or python, -m, codex_obsidian_sync.cli, --config, config path, service-run"
+        )
 
 
 def validate_rust_program_arguments_shape(program_arguments: list[str], name: str, reasons: list[str]) -> None:

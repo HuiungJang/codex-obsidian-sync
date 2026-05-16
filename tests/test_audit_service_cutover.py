@@ -23,9 +23,37 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report["ok"], report["no_go_reasons"])
         self.assertEqual(report["snapshots"]["pre"]["plist_label"], "com.codex.obsidian-sync")
+        self.assertEqual(
+            report["snapshots"]["pre"]["program_arguments"],
+            [python_binary, "--config", "/tmp/config.toml", "service-run"],
+        )
+        self.assertEqual(report["snapshots"]["pre"]["program_arguments_count"], 4)
         self.assertEqual(report["snapshots"]["pre"]["program_arg0"], python_binary)
         self.assertFalse(report["snapshots"]["stopped"]["launchd_loaded"])
         self.assertEqual(report["snapshots"]["post"]["program_arg0"], rust_binary)
+
+    def test_reports_ready_from_python_module_launchagent_shape(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(
+                root,
+                python_binary=python_binary,
+                rust_binary=rust_binary,
+                pre_python_module=True,
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report["ok"], report["no_go_reasons"])
+        self.assertEqual(
+            report["snapshots"]["pre"]["program_arguments"],
+            [python_binary, "-m", "codex_obsidian_sync.cli", "--config", "/tmp/config.toml", "service-run"],
+        )
+        self.assertEqual(report["snapshots"]["pre"]["program_arguments_count"], 6)
 
     def test_fails_when_stopped_snapshot_is_still_loaded(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
@@ -224,6 +252,47 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("post: launchctl print did not return a loaded service", report["no_go_reasons"])
 
+    def test_fails_when_loaded_launchctl_output_lacks_expected_label(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            files["post_launchctl"].write_text(
+                launchctl_loaded_text("com.codex.obsidian-sync.other"),
+                encoding="utf-8",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: launchctl print did not include expected label", report["no_go_reasons"])
+
+    def test_fails_when_pre_python_plist_has_unexpected_shape(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(
+                root,
+                python_binary=python_binary,
+                rust_binary=rust_binary,
+                pre_extra_before_service_run="--unexpected",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "pre: Python LaunchAgent ProgramArguments must be either binary, --config, config path, service-run "
+            "or python, -m, codex_obsidian_sync.cli, --config, config path, service-run",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_post_status_loaded_flag_is_not_boolean(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)
@@ -378,6 +447,8 @@ def write_cutover_files(
     post_plist_label: str = "com.codex.obsidian-sync",
     pre_config_path: str = "/tmp/config.toml",
     post_config_path: str = "/tmp/config.toml",
+    pre_extra_before_service_run: str | None = None,
+    pre_python_module: bool = False,
 ) -> dict[str, Path]:
     post_program_arg0 = post_program_arg0 or rust_binary
     files = {
@@ -391,16 +462,23 @@ def write_cutover_files(
         "post_launchctl": root / "post-launchctl.txt",
     }
     write_status(files["pre_status"], launchd_loaded=True, label=pre_status_label)
-    write_plist(files["pre_plist"], python_binary, label=pre_plist_label, config_path=pre_config_path)
-    files["pre_launchctl"].write_text("state = running\n", encoding="utf-8")
+    write_plist(
+        files["pre_plist"],
+        python_binary,
+        label=pre_plist_label,
+        config_path=pre_config_path,
+        extra_before_service_run=pre_extra_before_service_run,
+        module_invocation=pre_python_module,
+    )
+    files["pre_launchctl"].write_text(launchctl_loaded_text(pre_status_label), encoding="utf-8")
     write_status(files["stopped_status"], launchd_loaded=stopped_loaded, label=stopped_status_label)
     files["stopped_launchctl"].write_text(
-        "state = running\n" if stopped_loaded else "could not find service\n",
+        launchctl_loaded_text(stopped_status_label) if stopped_loaded else "could not find service\n",
         encoding="utf-8",
     )
     write_status(files["post_status"], launchd_loaded=True, label=post_status_label)
     write_plist(files["post_plist"], post_program_arg0, label=post_plist_label, config_path=post_config_path)
-    files["post_launchctl"].write_text("state = running\n", encoding="utf-8")
+    files["post_launchctl"].write_text(launchctl_loaded_text(post_status_label), encoding="utf-8")
     return files
 
 
@@ -430,8 +508,11 @@ def write_plist(
     extra_before_service_run: str | None = None,
     config_path: str = "/tmp/config.toml",
     include_config: bool = True,
+    module_invocation: bool = False,
 ) -> None:
     program_arguments = [program_arg0]
+    if module_invocation:
+        program_arguments.extend(["-m", "codex_obsidian_sync.cli"])
     if include_config:
         program_arguments.extend(["--config", config_path])
     if extra_before_service_run is not None:
@@ -449,6 +530,10 @@ def write_plist(
             sort_keys=False,
         )
     )
+
+
+def launchctl_loaded_text(label: str) -> str:
+    return f"gui/501/{label} = {{\n\tstate = running\n}}\n"
 
 
 if __name__ == "__main__":
