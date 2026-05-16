@@ -237,6 +237,8 @@ codex-obsidian-sync status --json
 target별 release smoke summary, Homebrew formula와 smoke summary, 설치될 Rust binary,
 Python rollback binary, 현재 LaunchAgent 상태, monitor directory 조건을 읽기 전용으로
 점검하고 `ok=false`이면 컷오버하지 않는다.
+monitor directory는 `/tmp` 아래의 전용 `codex-obsidian-sync-*` 경로여야 하며, 새 컷오버 전에는
+기존 checkpoint JSON이 없어야 한다.
 
 ```bash
 python3 scripts/audit_cutover_readiness.py \
