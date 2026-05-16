@@ -41,7 +41,13 @@ fn status_snapshot_preserves_distinct_error_types_and_launchd_state() {
     let paths = resolve_service_paths(Some(&config_path), &config).unwrap();
     let now = OffsetDateTime::parse("2026-05-16T00:02:00Z", &Rfc3339).unwrap();
 
-    for error_type in ["ConfigError", "LockContention", "ParseError", "WriteError"] {
+    for error_type in [
+        "ConfigError",
+        "LockContention",
+        "LaunchdError",
+        "ParseError",
+        "WriteError",
+    ] {
         let service_state = service_state(json!({
             "pending": false,
             "last_error_type": error_type,
@@ -50,8 +56,14 @@ fn status_snapshot_preserves_distinct_error_types_and_launchd_state() {
 
         let snapshot = build_status_snapshot(&config, &paths, false, &service_state, now);
         let rendered = render_status_snapshot(&snapshot);
+        let payload = serde_json::to_value(&snapshot).unwrap();
 
         assert_eq!(snapshot.last_error, format!("{error_type}: phase 18 test"));
+        assert_eq!(
+            payload["last_error"],
+            format!("{error_type}: phase 18 test")
+        );
+        assert_eq!(payload["launchd_loaded"], false);
         assert!(!snapshot.launchd_loaded);
         assert!(rendered.contains("LaunchAgent: unloaded"));
     }
