@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod discovery;
+pub mod dry_run_output;
 pub mod error;
 pub mod models;
 pub mod parser;
