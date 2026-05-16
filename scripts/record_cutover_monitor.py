@@ -326,9 +326,12 @@ def parse_iso_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or value in {"none", "never run"}:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 
 def non_negative_int_value(value: Any) -> int | None:

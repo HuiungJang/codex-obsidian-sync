@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,12 @@ from record_cutover_monitor import (
 
 
 ORDERED_CHECKPOINTS = ("+5m", "+1h", "+4h", "+24h")
+CHECKPOINT_MIN_ELAPSED = {
+    "+5m": timedelta(minutes=5),
+    "+1h": timedelta(hours=1),
+    "+4h": timedelta(hours=4),
+    "+24h": timedelta(hours=24),
+}
 COUNTER_FIELDS = ("skipped_invalid", "processed", "appended", "rewritten")
 ALLOWED_NON_RECORD_NAMES = {
     MARKER,
@@ -227,6 +233,10 @@ def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
     previous_recorded_at: datetime | None = None
     previous_success: datetime | None = None
     previous_skipped_invalid: int | None = None
+    recorded_at_by_checkpoint = {
+        str(record.get("checkpoint")): parse_iso_datetime(record.get("recorded_at"))
+        for record in records
+    }
     label_values = {
         (record.get("status_launchd_label"), record.get("plist_label"))
         for record in records
@@ -248,6 +258,17 @@ def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
         reasons.append("status config_path changed across monitor records")
     if len(plist_path_values) > 1:
         reasons.append("status plist_path changed across monitor records")
+
+    first_checkpoint_at = recorded_at_by_checkpoint.get("+5m")
+    if first_checkpoint_at:
+        inferred_cutover_at = first_checkpoint_at - CHECKPOINT_MIN_ELAPSED["+5m"]
+        for checkpoint in ORDERED_CHECKPOINTS[1:]:
+            current_recorded_at = recorded_at_by_checkpoint.get(checkpoint)
+            if (
+                current_recorded_at
+                and current_recorded_at < inferred_cutover_at + CHECKPOINT_MIN_ELAPSED[checkpoint]
+            ):
+                reasons.append(f"{checkpoint}: recorded_at is earlier than required checkpoint interval")
 
     for record in records:
         checkpoint = str(record.get("checkpoint"))
@@ -331,9 +352,12 @@ def parse_iso_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or value in {"none", "never run"}:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 
 def is_non_negative_int(value: Any) -> bool:

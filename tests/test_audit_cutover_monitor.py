@@ -540,6 +540,66 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("+4h: recorded_at regressed from an earlier checkpoint", report["no_go_reasons"])
 
+    def test_fails_when_checkpoint_recorded_too_soon(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(
+                root,
+                expected_binary=expected_binary,
+                recorded_ats={"+24h": "2026-05-16T05:00:00+00:00"},
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+24h: recorded_at is earlier than required checkpoint interval", report["no_go_reasons"])
+
+    def test_fails_when_recorded_at_is_timezone_naive(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(
+                root,
+                expected_binary=expected_binary,
+                recorded_ats={"+1h": "2026-05-16T01:00:00"},
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+1h: recorded_at is missing or invalid", report["no_go_reasons"])
+
     def test_fails_when_last_success_is_missing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
             root = Path(temp_dir)
