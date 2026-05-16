@@ -1,0 +1,79 @@
+name: Release Rust binary
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.target }}"
+
+      - name: Verify release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 --manifest-path rust/Cargo.toml | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} must match Cargo version v${version}" >&2
+            exit 1
+          fi
+
+      - name: Build release binary
+        run: cargo build --release --manifest-path rust/Cargo.toml --target "${{ matrix.target }}"
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="codex-obsidian-sync-${{ matrix.target }}"
+          mkdir -p "dist/${package}"
+          cp "rust/target/${{ matrix.target }}/release/codex-obsidian-sync-rs" "dist/${package}/codex-obsidian-sync"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-obsidian-sync-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --title "${GITHUB_REF_NAME}" --notes "Rust binary release ${GITHUB_REF_NAME}"
