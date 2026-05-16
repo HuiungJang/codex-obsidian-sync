@@ -36,6 +36,8 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(report["missing_checkpoints"], [])
         self.assertEqual(report["extra_records"], [])
         self.assertEqual(report["present_checkpoints"], ["+5m", "+1h", "+4h", "+24h"])
+        self.assertEqual(report["records"][0]["status_launchd_label"], "com.codex.obsidian-sync")
+        self.assertEqual(report["records"][0]["plist_label"], "com.codex.obsidian-sync")
 
     def test_fails_when_required_checkpoint_is_missing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -122,6 +124,33 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(report["extra_records"], ["monitor-audit.json"])
         self.assertIn("unexpected monitor record: monitor-audit.json", report["no_go_reasons"])
 
+    def test_fails_when_record_label_is_unexpected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary, plist_labels={"+4h": "com.codex.obsidian-sync.other"})
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+4h: LaunchAgent Label does not match expected label", report["no_go_reasons"])
+        self.assertIn("LaunchAgent label changed across monitor records", report["no_go_reasons"])
+
 
 def write_marker(root: Path) -> None:
     (root / ".codex-obsidian-sync-cutover-monitor").write_text(
@@ -136,9 +165,13 @@ def write_records(
     expected_binary: str,
     omit: set[str] | None = None,
     failed: set[str] | None = None,
+    status_labels: dict[str, str] | None = None,
+    plist_labels: dict[str, str] | None = None,
 ) -> None:
     omit = omit or set()
     failed = failed or set()
+    status_labels = status_labels or {}
+    plist_labels = plist_labels or {}
     checkpoints = {
         "+5m": ("plus5m.json", "2026-05-16T00:05:00+00:00"),
         "+1h": ("plus1h.json", "2026-05-16T01:00:00+00:00"),
@@ -157,6 +190,8 @@ def write_records(
                     "recorded_at": last_success,
                     "no_go_reasons": ["last_error is boom"] if is_failed else [],
                     "configured": True,
+                    "status_launchd_label": status_labels.get(checkpoint, "com.codex.obsidian-sync"),
+                    "plist_label": plist_labels.get(checkpoint, "com.codex.obsidian-sync"),
                     "launchd_loaded": True,
                     "launchctl_loaded": True,
                     "program_arg0": expected_binary,

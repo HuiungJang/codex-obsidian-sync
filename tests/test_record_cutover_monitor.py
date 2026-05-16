@@ -52,6 +52,8 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(record["ok"])
         self.assertEqual(record["checkpoint"], "+5m")
+        self.assertEqual(record["status_launchd_label"], "com.codex.obsidian-sync")
+        self.assertEqual(record["plist_label"], "com.codex.obsidian-sync")
         self.assertEqual(record["program_arg0"], expected_binary)
         self.assertEqual(record["service_command"], "service-run")
         self.assertEqual(record["skipped_invalid"], 0)
@@ -216,12 +218,89 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(record["ok"], record["no_go_reasons"])
 
+    def test_fails_when_status_label_is_unexpected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0, label="com.codex.obsidian-sync.other")
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text("state = running\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertIn("status launchd_label does not match expected label", record["no_go_reasons"])
+
+    def test_fails_when_plist_label_is_unexpected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0)
+            write_plist(plist_path, expected_binary, label="com.codex.obsidian-sync.other")
+            launchctl_path.write_text("state = running\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertIn("LaunchAgent Label does not match expected label", record["no_go_reasons"])
+
 
 def write_status(
     path: Path,
     *,
     skipped_invalid: int,
     last_success: str = "2026-05-16T00:05:00+00:00",
+    label: str = "com.codex.obsidian-sync",
 ) -> None:
     path.write_text(
         json.dumps(
@@ -230,7 +309,7 @@ def write_status(
                 "config_path": "/tmp/config.toml",
                 "vault": "/tmp/vault",
                 "cooldown": "1m (60s)",
-                "launchd_label": "com.codex.obsidian-sync",
+                "launchd_label": label,
                 "launchd_loaded": True,
                 "plist_path": "/tmp/agent.plist",
                 "pending": "no",
@@ -251,11 +330,11 @@ def write_status(
     )
 
 
-def write_plist(path: Path, program_arg0: str) -> None:
+def write_plist(path: Path, program_arg0: str, *, label: str = "com.codex.obsidian-sync") -> None:
     path.write_bytes(
         plistlib.dumps(
             {
-                "Label": "com.codex.obsidian-sync",
+                "Label": label,
                 "ProgramArguments": [
                     program_arg0,
                     "--config",

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from record_cutover_monitor import (
+    DEFAULT_LABEL,
     MARKER,
     MARKER_CONTENT,
     checkpoint_record_name,
@@ -25,12 +26,14 @@ def main() -> int:
         default=Path("/tmp/codex-obsidian-sync-cutover-monitor"),
         help="Directory containing record_cutover_monitor.py checkpoint records.",
     )
+    parser.add_argument("--expected-label", default=DEFAULT_LABEL, help="Expected LaunchAgent label.")
     parser.add_argument("--expected-program-arg0", help="Expected LaunchAgent ProgramArguments[0].")
     parser.add_argument("--output", type=Path, help="Write the monitor audit report to this path.")
     args = parser.parse_args()
 
     result = audit_monitor_dir(
         monitor_dir=args.monitor_dir,
+        expected_label=args.expected_label,
         expected_program_arg0=args.expected_program_arg0,
     )
     if args.output:
@@ -40,7 +43,12 @@ def main() -> int:
     return 0 if result["ok"] else 1
 
 
-def audit_monitor_dir(*, monitor_dir: Path, expected_program_arg0: str | None = None) -> dict[str, Any]:
+def audit_monitor_dir(
+    *,
+    monitor_dir: Path,
+    expected_label: str = DEFAULT_LABEL,
+    expected_program_arg0: str | None = None,
+) -> dict[str, Any]:
     root = monitor_dir.expanduser().resolve()
     no_go_reasons: list[str] = []
     records: list[dict[str, Any]] = []
@@ -67,7 +75,7 @@ def audit_monitor_dir(*, monitor_dir: Path, expected_program_arg0: str | None = 
                 continue
             records.append(record)
             record_summaries.append(summarize_record(record, record_path))
-            no_go_reasons.extend(validate_record(record, checkpoint, expected_program_arg0))
+            no_go_reasons.extend(validate_record(record, checkpoint, expected_label, expected_program_arg0))
 
     no_go_reasons.extend(validate_sequence(records))
     present_checkpoints = {record.get("checkpoint") for record in records}
@@ -81,6 +89,7 @@ def audit_monitor_dir(*, monitor_dir: Path, expected_program_arg0: str | None = 
         "present_checkpoints": [record.get("checkpoint") for record in records],
         "missing_checkpoints": missing_checkpoints,
         "extra_records": extra_record_names,
+        "expected_label": expected_label,
         "expected_program_arg0": expected_program_arg0,
         "records": record_summaries,
         "no_go_reasons": no_go_reasons,
@@ -110,6 +119,7 @@ def read_record(path: Path, checkpoint: str, no_go_reasons: list[str]) -> dict[s
 def validate_record(
     record: dict[str, Any],
     expected_checkpoint: str,
+    expected_label: str,
     expected_program_arg0: str | None,
 ) -> list[str]:
     reasons: list[str] = []
@@ -124,6 +134,10 @@ def validate_record(
     for field in ("configured", "launchd_loaded", "launchctl_loaded"):
         if record.get(field) is not True:
             reasons.append(f"{expected_checkpoint}: {field} is not true")
+    if record.get("status_launchd_label") != expected_label:
+        reasons.append(f"{expected_checkpoint}: status launchd_label does not match expected label")
+    if record.get("plist_label") != expected_label:
+        reasons.append(f"{expected_checkpoint}: LaunchAgent Label does not match expected label")
     if record.get("service_command") != "service-run":
         reasons.append(f"{expected_checkpoint}: service command is not service-run")
     if expected_program_arg0 and record.get("program_arg0") != expected_program_arg0:
@@ -137,7 +151,14 @@ def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
     reasons: list[str] = []
     previous_success: datetime | None = None
     previous_skipped_invalid: int | None = None
+    label_values = {
+        (record.get("status_launchd_label"), record.get("plist_label"))
+        for record in records
+        if record.get("status_launchd_label") or record.get("plist_label")
+    }
     program_arg0_values = {record.get("program_arg0") for record in records if record.get("program_arg0")}
+    if len(label_values) > 1:
+        reasons.append("LaunchAgent label changed across monitor records")
     if len(program_arg0_values) > 1:
         reasons.append("ProgramArguments[0] changed across monitor records")
 
@@ -162,6 +183,8 @@ def summarize_record(record: dict[str, Any], path: Path) -> dict[str, Any]:
         "checkpoint": record.get("checkpoint"),
         "ok": record.get("ok"),
         "recorded_at": record.get("recorded_at"),
+        "status_launchd_label": record.get("status_launchd_label"),
+        "plist_label": record.get("plist_label"),
         "program_arg0": record.get("program_arg0"),
         "last_success": record.get("last_success"),
         "last_error": record.get("last_error"),

@@ -91,6 +91,7 @@ def record_checkpoint(args: argparse.Namespace, output_dir: Path) -> dict[str, A
         plist=plist,
         launchctl=launchctl,
         previous_records=previous,
+        expected_label=args.label,
         expected_program_arg0=args.expected_program_arg0,
         allow_unloaded=args.allow_unloaded,
         allow_skipped_invalid_increase=args.allow_skipped_invalid_increase,
@@ -149,12 +150,15 @@ def build_record(
     plist: dict[str, Any],
     launchctl: str,
     previous_records: list[dict[str, Any]],
+    expected_label: str,
     expected_program_arg0: str | None,
     allow_unloaded: bool,
     allow_skipped_invalid_increase: bool,
     note_paths: list[Path],
 ) -> dict[str, Any]:
     program_arguments = list(plist.get("ProgramArguments") or [])
+    status_launchd_label = status.get("launchd_label")
+    plist_label = plist.get("Label")
     last_summary = status.get("last_summary") if isinstance(status.get("last_summary"), dict) else {}
     skipped_invalid = int(last_summary.get("skipped_invalid") or 0)
     previous_skipped_invalid = max(
@@ -177,6 +181,10 @@ def build_record(
         no_go_reasons.append(f"unexpected checkpoint: {checkpoint}")
     if not status.get("configured"):
         no_go_reasons.append("status reports configured=false")
+    if status_launchd_label != expected_label:
+        no_go_reasons.append("status launchd_label does not match expected label")
+    if plist_label != expected_label:
+        no_go_reasons.append("LaunchAgent Label does not match expected label")
     if not allow_unloaded and not status.get("launchd_loaded"):
         no_go_reasons.append("status reports launchd_loaded=false")
     if not allow_unloaded and not launchctl:
@@ -201,8 +209,11 @@ def build_record(
         "ok": not no_go_reasons,
         "checkpoint": checkpoint,
         "recorded_at": recorded_at,
+        "expected_label": expected_label,
         "no_go_reasons": no_go_reasons,
         "configured": bool(status.get("configured")),
+        "status_launchd_label": status_launchd_label,
+        "plist_label": plist_label,
         "launchd_loaded": bool(status.get("launchd_loaded")),
         "launchctl_loaded": bool(launchctl),
         "plist_path": status.get("plist_path"),
