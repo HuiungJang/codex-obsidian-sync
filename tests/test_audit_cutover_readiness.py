@@ -12,6 +12,10 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import audit_cutover_readiness
+
 
 class AuditCutoverReadinessTests(unittest.TestCase):
     def test_reports_ready_from_offline_release_and_launchagent_inputs(self) -> None:
@@ -72,6 +76,19 @@ class AuditCutoverReadinessTests(unittest.TestCase):
         self.assertCheckOk(report, "release smoke summary:x86_64-apple-darwin")
         self.assertCheckOk(report, "homebrew smoke summary")
         self.assertCheckOk(report, "launchagent current state")
+
+    def test_refuses_symlinked_output_report_path(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            output_target = root / "target-report.json"
+            output = root / "cutover-readiness.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            with self.assertRaisesRegex(RuntimeError, "output path is a symlink"):
+                audit_cutover_readiness.resolve_output_path(output)
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
 
     def test_fails_when_formula_checksum_does_not_match_release_checksum(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
