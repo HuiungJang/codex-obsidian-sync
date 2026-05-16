@@ -316,16 +316,22 @@ def audit_homebrew_formula(
 
     tag = f"v{version}"
     base_url = f"https://github.com/{repository}/releases/download/{tag}"
+    target_details: dict[str, Any] = {}
     for target in TARGETS:
         package_name = f"{FORMULA_NAME}-{target}.tar.gz"
         expected_url = f"{base_url}/{package_name}"
-        if expected_url not in content:
+        target_block = formula_target_block(content, target)
+        urls = formula_statement_values(target_block, "url")
+        sha256s = formula_statement_values(target_block, "sha256")
+        target_details[target] = {"urls": urls, "sha256s": sha256s}
+        if urls != [expected_url]:
             reasons.append(f"formula URL is missing for {target}")
         checksum = checksums.get(target)
         if checksum is None:
             reasons.append(f"release checksum is unavailable for {target}")
-        elif f'sha256 "{checksum}"' not in content:
+        elif sha256s != [checksum]:
             reasons.append(f"formula checksum mismatch for {target}")
+    details["targets"] = target_details
 
     ruby = shutil.which("ruby")
     if ruby:
@@ -336,6 +342,24 @@ def audit_homebrew_formula(
             reasons.append("formula Ruby syntax check failed")
 
     return check("homebrew formula", not reasons, details, reasons)
+
+
+def formula_target_block(content: str, target: str) -> str:
+    selectors = {
+        "aarch64-apple-darwin": "on_arm",
+        "x86_64-apple-darwin": "on_intel",
+    }
+    selector = selectors[target]
+    pattern = rf"^[ \t]*{selector}[ \t]+do[ \t]*\n(?P<body>.*?)(?=^[ \t]*end[ \t]*$)"
+    match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+    if not match:
+        return ""
+    return match.group("body")
+
+
+def formula_statement_values(block: str, statement: str) -> list[str]:
+    pattern = rf'^[ \t]*{re.escape(statement)}[ \t]+"([^"]+)"[ \t]*$'
+    return re.findall(pattern, block, re.MULTILINE)
 
 
 def audit_release_smoke_summaries(

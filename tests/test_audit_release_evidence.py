@@ -1401,6 +1401,89 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_homebrew_formula_url_is_only_present_in_comment(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            write_release_smoke_summaries(release_dir)
+            formula = write_formula(release_dir, checksums)
+            expected_url = (
+                "https://github.com/HuiungJang/codex-obsidian-sync/releases/download/v0.1.0/"
+                "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            )
+            wrong_url = expected_url.replace("v0.1.0", "v0.2.0")
+            formula.write_text(
+                formula.read_text(encoding="utf-8").replace(
+                    f'      url "{expected_url}"',
+                    f'      # url "{expected_url}"\n      url "{wrong_url}"',
+                ),
+                encoding="utf-8",
+            )
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew formula: formula URL is missing for aarch64-apple-darwin",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_homebrew_formula_checksum_is_only_present_in_comment(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            write_release_smoke_summaries(release_dir)
+            formula = write_formula(release_dir, checksums)
+            expected_checksum = checksums["x86_64-apple-darwin"]
+            wrong_checksum = "0" * 64
+            formula.write_text(
+                formula.read_text(encoding="utf-8").replace(
+                    f'      sha256 "{expected_checksum}"',
+                    f'      # sha256 "{expected_checksum}"\n      sha256 "{wrong_checksum}"',
+                ),
+                encoding="utf-8",
+            )
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew formula: formula checksum mismatch for x86_64-apple-darwin",
+            report["no_go_reasons"],
+        )
+
     def assertCheckOk(self, report: dict[str, object], name: str) -> None:
         checks = report["checks"]
         self.assertIsInstance(checks, list)
