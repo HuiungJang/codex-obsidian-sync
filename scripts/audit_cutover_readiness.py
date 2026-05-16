@@ -389,6 +389,8 @@ def audit_release_smoke_summary(release_dir: Path | None, target: str, version: 
         reasons.append("release smoke note_files is not positive")
     if not isinstance(installed_binary, str) or not installed_binary:
         reasons.append("release smoke installed_binary is missing")
+    elif not Path(installed_binary).is_absolute():
+        reasons.append("release smoke installed_binary is not absolute")
     if not isinstance(commands, list):
         reasons.append("release smoke commands are missing")
     else:
@@ -473,6 +475,8 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke note_files is not positive")
     if not isinstance(installed_binary, str) or not installed_binary:
         reasons.append("Homebrew smoke installed_binary is missing")
+    elif not Path(installed_binary).is_absolute():
+        reasons.append("Homebrew smoke installed_binary is not absolute")
     if not isinstance(commands, list):
         reasons.append("Homebrew smoke commands are missing")
     else:

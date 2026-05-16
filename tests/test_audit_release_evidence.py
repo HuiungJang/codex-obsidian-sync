@@ -278,6 +278,41 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_installed_binary_is_relative(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(
+                release_dir,
+                command_binary="bin/codex-obsidian-sync",
+                installed_binary="bin/codex-obsidian-sync",
+            )
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke installed_binary is not absolute",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_counter_is_boolean(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -610,6 +645,42 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_homebrew_smoke_installed_binary_is_relative(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(
+                release_dir,
+                formula,
+                command_binary="bin/codex-obsidian-sync",
+                installed_binary="bin/codex-obsidian-sync",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke installed_binary is not absolute",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_dir_contains_unexpected_file(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -852,11 +923,11 @@ def write_release_smoke_summaries(
     installed_after: bool = False,
     version_command_stdout: str = "codex-obsidian-sync 0.1.0\n",
     command_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+    installed_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
     tarball_sha256: str | None = None,
     checksum_sha256: str | None = None,
 ) -> None:
     for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
-        installed_binary = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync"
         tarball = release_dir / f"codex-obsidian-sync-{target}.tar.gz"
         checksum = release_dir / f"codex-obsidian-sync-{target}.tar.gz.sha256"
         (release_dir / f"codex-obsidian-sync-{target}.smoke-summary.json").write_text(
@@ -933,8 +1004,9 @@ def write_homebrew_smoke_summary(
     version: str = "codex-obsidian-sync 0.1.0",
     formula_sha256: str | None = None,
     install_formula: str | None = None,
+    command_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+    installed_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
 ) -> None:
-    installed_binary = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync"
     formula_path = str(formula.resolve())
     install_formula_path = install_formula or formula_path
     (release_dir / "homebrew-smoke-summary.json").write_text(
@@ -957,13 +1029,13 @@ def write_homebrew_smoke_summary(
                     {"command": ["brew", "install", "--formula", install_formula_path], "returncode": 0},
                     {"command": ["brew", "--prefix", "codex-obsidian-sync"], "returncode": 0},
                     {
-                        "command": [installed_binary, "--version"],
+                        "command": [command_binary, "--version"],
                         "returncode": 0,
                         "stdout": f"{version}\n",
                     },
                     {
                         "command": [
-                            installed_binary,
+                            command_binary,
                             "--config",
                             "/tmp/config.toml",
                             "status",
@@ -973,7 +1045,7 @@ def write_homebrew_smoke_summary(
                     },
                     {
                         "command": [
-                            installed_binary,
+                            command_binary,
                             "--config",
                             "/tmp/config.toml",
                             "sync-once",
