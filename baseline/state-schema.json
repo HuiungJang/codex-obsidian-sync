@@ -1,0 +1,68 @@
+{
+  "service_state": {
+    "keys": [
+      "last_error_summary",
+      "last_error_type",
+      "last_run_finished_at",
+      "last_run_started_at",
+      "last_success_at",
+      "last_summary",
+      "last_trigger_at",
+      "next_eligible_at",
+      "pending",
+      "schema_version",
+      "updated_at"
+    ],
+    "schema_version": 1,
+    "unknown_fields": "ignored by current Python loader"
+  },
+  "sync_state": {
+    "file_entry_keys": [
+      "canonical_session_id",
+      "conversation_note_fingerprint",
+      "conversation_note_path",
+      "daily_entries",
+      "daily_note_path",
+      "date",
+      "header_hash",
+      "included",
+      "is_subagent",
+      "last_note_write_at",
+      "last_written_message_count",
+      "last_written_message_key",
+      "mtime_ns",
+      "offset",
+      "originator",
+      "project_note_path",
+      "project_slug",
+      "render_hash",
+      "size",
+      "started_at",
+      "started_date",
+      "started_time",
+      "status",
+      "thread_name",
+      "time",
+      "title",
+      "transcript_hash",
+      "updated_at"
+    ],
+    "fingerprint_fields": {
+      "conversation_note_fingerprint": {
+        "mtime_ns": "int",
+        "size": "int"
+      }
+    },
+    "numeric_fields": [
+      "offset",
+      "size",
+      "mtime_ns"
+    ],
+    "raw_transcript_storage": "forbidden",
+    "top_level": {
+      "files": "object keyed by absolute rollout path"
+    },
+    "unknown_file_entry_fields": "preserve where practical",
+    "unknown_top_level_fields": "preserve where practical"
+  }
+}

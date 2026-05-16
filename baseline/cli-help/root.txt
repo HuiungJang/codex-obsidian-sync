@@ -1,0 +1,16 @@
+$ codex-obsidian-sync --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync [-h] [--config CONFIG]
+                           {setup,start,stop,status,service-run,inspect-rollout,inspect-recent,sync-once,watch} ...
+
+positional arguments:
+  {setup,start,stop,status,service-run,inspect-rollout,inspect-recent,sync-once,watch}
+    service-run         ==SUPPRESS==
+
+options:
+  -h, --help            show this help message and exit
+  --config CONFIG
+
+[stderr]

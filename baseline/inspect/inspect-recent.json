@@ -1,0 +1,71 @@
+[
+  {
+    "canonical_session_id": "019f5f16-0000-7000-8000-000000000004",
+    "cwd": "/tmp/baseline-project",
+    "is_subagent": false,
+    "message_count": 2,
+    "messages": [
+      {
+        "message_key": "33911339c1b517acb1c511603f509772067b3b49",
+        "phase": "",
+        "role": "user",
+        "text_preview": "Stale offset first question",
+        "timestamp": "2026-05-14T00:30:30Z"
+      },
+      {
+        "message_key": "f2b7f041d0bef8b3d2e41b33423708bd5a037fbf",
+        "phase": "final_answer",
+        "role": "assistant",
+        "text_preview": "Stale offset recovered response",
+        "timestamp": "2026-05-14T00:31:00Z"
+      }
+    ],
+    "originator": "Codex Desktop",
+    "parent_session_id": null,
+    "project_slug": "baseline-project",
+    "rollout_path": "/tmp/codex-obsidian-sync-python-baseline/.codex/sessions/2026/05/14/rollout-2026-05-14T09-30-00-019f5f16-0000-7000-8000-000000000004.jsonl",
+    "source_kind": "vscode",
+    "started_at": "2026-05-14T00:30:00Z",
+    "thread_name": "Stale Offset",
+    "title_seed": "stale-offset-first-question",
+    "updated_at": "2026-05-14T00:30:00Z"
+  },
+  {
+    "canonical_session_id": "019f5f16-0000-7000-8000-000000000001",
+    "cwd": "/tmp/baseline-project",
+    "is_subagent": false,
+    "message_count": 3,
+    "messages": [
+      {
+        "message_key": "0c51ecc96cf6542fab270ac35978170cc3dcdb9c",
+        "phase": "",
+        "role": "user",
+        "text_preview": "Baseline first question",
+        "timestamp": "2026-05-14T00:01:00Z"
+      },
+      {
+        "message_key": "53ff183cfa5a640d0cb1d2bf7876286a13a72fa5",
+        "phase": "final_answer",
+        "role": "assistant",
+        "text_preview": "Use [REDACTED_API_KEY] for redaction baseline",
+        "timestamp": "2026-05-14T00:01:30Z"
+      },
+      {
+        "message_key": "9295acadb5bb475bb649a8ba87ec949377b16220",
+        "phase": "final_answer",
+        "role": "assistant",
+        "text_preview": "Baseline appended response",
+        "timestamp": "2026-05-14T00:02:00Z"
+      }
+    ],
+    "originator": "Codex Desktop",
+    "parent_session_id": null,
+    "project_slug": "baseline-project",
+    "rollout_path": "/tmp/codex-obsidian-sync-python-baseline/.codex/sessions/2026/05/14/rollout-2026-05-14T09-00-00-019f5f16-0000-7000-8000-000000000001.jsonl",
+    "source_kind": "vscode",
+    "started_at": "2026-05-14T00:00:00Z",
+    "thread_name": "Baseline Conversation",
+    "title_seed": "baseline-first-question",
+    "updated_at": "2026-05-14T00:00:00Z"
+  }
+]

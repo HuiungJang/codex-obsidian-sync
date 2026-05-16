@@ -1,0 +1,25 @@
+{
+  "config_path": "/tmp/codex-obsidian-sync-python-baseline/config.toml",
+  "configured": true,
+  "cooldown": "1m (60s)",
+  "last_error": "none",
+  "last_run": "2026-05-14T00:35:02+00:00",
+  "last_success": "2026-05-14T00:35:02+00:00",
+  "last_summary": {
+    "appended": 1,
+    "fast_path": 0,
+    "paused": 0,
+    "processed": 1,
+    "rewritten": 0,
+    "skipped_invalid": 0,
+    "skipped_subagents": 0,
+    "total_rollouts": 4,
+    "unchanged": 3
+  },
+  "launchd_label": "com.codex.obsidian-sync",
+  "launchd_loaded": true,
+  "next_eligible_run": "2026-05-14T00:40:00+00:00",
+  "pending": "yes",
+  "plist_path": "/tmp/codex-obsidian-sync-python-baseline/LaunchAgents/com.codex.obsidian-sync.plist",
+  "vault": "/tmp/codex-obsidian-sync-python-baseline/vault"
+}

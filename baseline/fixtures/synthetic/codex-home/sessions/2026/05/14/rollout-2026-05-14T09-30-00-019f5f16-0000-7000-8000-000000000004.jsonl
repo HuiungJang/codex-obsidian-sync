@@ -1,0 +1,2 @@
+{"payload": {"cwd": "/tmp/baseline-project", "id": "019f5f16-0000-7000-8000-000000000004", "originator": "Codex Desktop", "source": "vscode", "timestamp": "2026-05-14T00:30:00Z"}, "timestamp": "2026-05-14T00:30:00Z", "type": "session_meta"}
+{"payload": {"content": [{"text": "Stale offset first question", "type": "input_text"}], "role": "user", "type": "message"}, "timestamp": "2026-05-14T00:30:30Z", "type": "response_item"}

@@ -11,17 +11,28 @@ Obsidian vault에 아래 노트를 자동으로 만든다.
 
 기본 실행 모델은 `macOS + launchd`다.
 사용자는 한 번 `setup`만 해 두면, 이후 `Codex.app`와 `codex`를 평소처럼 사용하면 된다.
-
-## 명령 실행 방식
+Rust migration build에서는 background write가 별도 config gate 뒤에 있다.
 
 ## 권장 설치 방식
 
-가장 단순한 실행 방식은 `pipx` 설치다.
+릴리스가 공개된 뒤 일반 사용자는 GitHub Release의 macOS binary를 설치한다.
 
 ```bash
-cd /path/to/codex-obsidian-sync
-pipx install -e .
-pipx ensurepath
+VERSION=v0.1.0 # replace with the current release tag
+TARGET="$(uname -m)"
+case "$TARGET" in
+  arm64) TARGET=aarch64-apple-darwin ;;
+  x86_64) TARGET=x86_64-apple-darwin ;;
+  *) echo "unsupported architecture: $TARGET" >&2; exit 1 ;;
+esac
+
+BASE="https://github.com/HuiungJang/codex-obsidian-sync/releases/download/${VERSION}"
+curl -LO "${BASE}/codex-obsidian-sync-${TARGET}.tar.gz"
+curl -LO "${BASE}/codex-obsidian-sync-${TARGET}.tar.gz.sha256"
+shasum -a 256 -c "codex-obsidian-sync-${TARGET}.tar.gz.sha256"
+tar -xzf "codex-obsidian-sync-${TARGET}.tar.gz"
+mkdir -p ~/.local/bin
+install -m 0755 "codex-obsidian-sync-${TARGET}/codex-obsidian-sync" ~/.local/bin/codex-obsidian-sync
 ```
 
 이후에는 어디서든 아래처럼 바로 실행할 수 있다.
@@ -30,36 +41,55 @@ pipx ensurepath
 codex-obsidian-sync status
 ```
 
-왜 `pipx`를 권장하나:
+릴리스 artifact는 architecture별 tarball과 SHA-256 checksum을 함께 제공한다.
+release tag는 `Cargo.toml`의 Rust package version과 일치해야 한다.
+공개된 release asset 전체는 아래 명령으로 내려받아 checksum, formula, smoke summary를 다시 검증할 수 있다.
 
-- Homebrew Python 환경에서 `python3 -m pip install -e .`는 `externally-managed-environment`로 막힐 수 있다
-- 이 도구는 Python library보다 Python app에 가깝다
-- `pipx`는 독립 venv를 관리하면서 실행 파일만 노출해 준다
+```bash
+python3 scripts/audit_published_release.py \
+  --version "${VERSION}" \
+  --download-dir "/tmp/codex-obsidian-sync-release-${VERSION}"
+```
 
-검증 결과:
+Homebrew tap은 cutover release에서 공개한다.
 
-- `pipx install -e .` 설치 성공 확인
-- 설치 직후 `codex-obsidian-sync status --json` 실행 성공 확인
+```bash
+brew tap HuiungJang/codex-obsidian-sync
+brew install codex-obsidian-sync
+```
 
 ## 대안 실행 방식
 
-### 1. `pipx` 설치형 명령 사용
+### 1. 로컬 Rust migration binary 사용
 
-패키지를 설치했다면 아래처럼 바로 실행한다.
-
-```bash
-codex-obsidian-sync <command> [options]
-```
-
-예시:
+repo checkout 상태를 그대로 검증할 때는 Rust package를 local install한다.
+이 경로의 binary 이름은 release artifact와 구분하기 위해 `codex-obsidian-sync-rs`다.
 
 ```bash
-codex-obsidian-sync status
+cd /path/to/codex-obsidian-sync
+cargo install --path rust --locked
+codex-obsidian-sync-rs status
 ```
 
-### 2. venv 사용
+설치 없이 바로 실행할 수도 있다.
 
-`pipx`를 쓰기 싫다면 전용 venv를 하나 두는 방법도 있다.
+```bash
+cargo run --manifest-path rust/Cargo.toml -- status
+```
+
+### 2. Python legacy install
+
+cutover 전 Python implementation을 확인해야 할 때만 `pipx`를 쓴다.
+
+```bash
+cd /path/to/codex-obsidian-sync
+pipx install -e .
+pipx ensurepath
+```
+
+Homebrew Python 환경에서는 `python3 -m pip install -e .`가 `externally-managed-environment`로 막힐 수 있으므로 Python 경로에서는 `pipx`를 선호한다.
+
+### 3. Python venv 사용
 
 ```bash
 cd /path/to/codex-obsidian-sync
@@ -84,9 +114,9 @@ python -m pip install -e .
 - 전역 명령처럼 바로 쓰려면 alias 또는 PATH 조정이 필요하다
 - shell/session마다 activation 또는 절대 경로 호출이 필요하다
 
-### 3. repo에서 바로 실행
+### 4. Python repo에서 바로 실행
 
-아직 설치하지 않았다면 repo에서 module form으로 실행한다.
+Python implementation을 설치하지 않고 module form으로 실행한다.
 
 ```bash
 cd /path/to/codex-obsidian-sync
@@ -102,10 +132,10 @@ PYTHONPATH=src python3 -m codex_obsidian_sync.cli status
 
 이 문서 아래 예시에서는 짧게 `codex-obsidian-sync` 형태로 표기한다.
 
-### 4. shell alias 사용
+### 5. shell alias 사용
 
 설치는 원하지 않지만 짧은 명령이 필요하면 alias를 둘 수 있다.
-권장 순위는 `pip install -e .`보다 낮다.
+권장 순위는 release binary나 local Rust install보다 낮다.
 
 예시:
 
@@ -201,6 +231,57 @@ codex-obsidian-sync status --json
 - 마지막 에러 요약
 - 마지막 처리 건수
 
+## Cutover Monitoring
+
+컷오버 직전에는 readiness audit을 먼저 실행한다. 이 명령은 release artifact, checksum,
+target별 release smoke summary, Homebrew formula와 smoke summary, 설치될 Rust binary,
+Python rollback binary, 현재 LaunchAgent 상태, monitor directory 조건을 읽기 전용으로
+점검하고 `ok=false`이면 컷오버하지 않는다.
+monitor directory는 `/tmp` 아래의 전용 `codex-obsidian-sync-*` 경로여야 하며, 새 컷오버 전에는
+기존 checkpoint JSON이 없어야 한다.
+
+```bash
+python3 scripts/audit_cutover_readiness.py \
+  --version <tag> \
+  --release-dir dist \
+  --homebrew-formula <tap>/Formula/codex-obsidian-sync.rb \
+  --expected-rust-binary "$(command -v codex-obsidian-sync)" \
+  --rollback-binary "$HOME/.local/bin/codex-obsidian-sync"
+```
+
+pre-cutover LaunchAgent binary까지 고정해서 확인하려면 현재 plist의 실제 `ProgramArguments[0]`를
+`--expected-current-program-arg0`에 넘긴다.
+
+서비스 전환 시에는 stop/start 전후 증거를 파일로 남긴 뒤 `scripts/audit_service_cutover.py`로
+Python service unload와 Rust service load를 판정한다. 이 스크립트는 LaunchAgent를 변경하지 않는다.
+
+실제 서비스 label을 건드리기 전에 임시 label로 launchd 경로만 smoke 할 수 있다. 이 명령은
+`com.codex.obsidian-sync.smoke.<pid>` label과 `/tmp/codex-obsidian-sync-*` runtime만 사용하고,
+마지막에 해당 임시 LaunchAgent를 `bootout` 한다.
+
+```bash
+python3 scripts/smoke_launchagent.py \
+  --binary "$(command -v codex-obsidian-sync)" \
+  --work-dir "/tmp/codex-obsidian-sync-launchagent-smoke"
+```
+
+Rust LaunchAgent cutover 직후에는 아래 checkpoint를 기록한다.
+
+```bash
+python3 scripts/record_cutover_monitor.py --checkpoint +5m --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+python3 scripts/record_cutover_monitor.py --checkpoint +1h --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+python3 scripts/record_cutover_monitor.py --checkpoint +4h --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+python3 scripts/record_cutover_monitor.py --checkpoint +24h --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+```
+
+각 record는 `/tmp/codex-obsidian-sync-cutover-monitor` 아래에 남는다. 이 디렉터리에는 checkpoint JSON
+네 개만 남겨야 하며, `ok=false`이면 `no_go_reasons`를 먼저 확인한다. 네 checkpoint가 모두 끝난 뒤에는
+전체 record set을 감사한다.
+
+```bash
+python3 scripts/audit_cutover_monitor.py --expected-program-arg0 "$(command -v codex-obsidian-sync)"
+```
+
 ### `service-run`
 
 launchd가 내부적으로 호출하는 명령이다.
@@ -215,12 +296,29 @@ codex-obsidian-sync service-run
 - launchd 없이 실제 sync 경로만 한 번 태워보고 싶을 때
 - `status`에 last success / last summary가 기록되는지 보고 싶을 때
 
+Rust migration build에서는 background write 안전장치가 있다.
+config에 `rust_service_write_enabled = true`가 없으면 `service-run`은 vault를 쓰지 않고 실패한다.
+실제 LaunchAgent write를 켜기 전에는 copied-vault나 dry-run 검증을 먼저 끝낸다.
+
 ### `sync-once`
 
 launchd와 무관하게 즉시 한 번 동기화한다.
 
 ```bash
 codex-obsidian-sync sync-once --vault "/absolute/path/to/vault"
+```
+
+기본값은 dry-run이다.
+결과 파일을 남기려면 output directory를 지정한다.
+
+```bash
+codex-obsidian-sync sync-once --vault "/absolute/path/to/vault" --dry-run-output /tmp/codex-obsidian-sync-dry-run
+```
+
+실제 vault와 state를 쓰려면 `--write`를 명시한다.
+
+```bash
+codex-obsidian-sync sync-once --vault "/absolute/path/to/vault" --write
 ```
 
 용도:
@@ -254,14 +352,76 @@ codex-obsidian-sync inspect-rollout /absolute/path/to/rollout.jsonl
 - 문제 세션 하나만 떼어 보고 싶을 때
 - title seed, project slug, message filtering 결과를 확인할 때
 
-### `watch`
+## Migration Safety Contract
 
-예전 polling 모드다.
-현재 기본 UX는 `launchd + service-run`이므로 보통은 권장하지 않는다.
+Rust migration build의 기본 실행은 실제 vault를 쓰지 않는 dry-run이다.
+다음 파일과 디렉터리는 `sync-once --write` 또는 gated `service-run` 전에는 수정하지 않는다.
+
+- configured Obsidian vault
+- `.codex` source logs and `session_index.jsonl`
+- configured real `sync-state.json`
+- configured lock files
+- corrupt-state quarantine files
+
+`--dry-run-output`은 real vault, `.codex`, state directory 내부를 거부하고 기존 non-empty directory도 거부한다.
+출력 디렉터리에는 렌더링된 note와 temp `sync-state.json`이 남으므로, 삭제 전 diff 확인에 쓸 수 있다.
+
+실제 쓰기 허용 조건:
+
+- copied-vault `sync-once --write` 테스트가 통과해야 한다
+- partial note/state failure recovery 테스트가 통과해야 한다
+- LaunchAgent background write는 config에 `rust_service_write_enabled = true`가 있을 때만 가능하다
+- public cutover 전에는 Python/pipx 실행 경로를 rollback path로 유지한다
+
+## Python Rollback
+
+cutover window 동안에는 Python implementation을 다시 설치하고 같은 config로 LaunchAgent를 되돌릴 수 있어야 한다.
+rollback은 Rust LaunchAgent를 먼저 내린 뒤 Python command가 plist에 다시 기록되는지 확인하는 순서로 진행한다.
+첫 Rust `--write` 또는 service cutover 전에는 상태와 LaunchAgent 증거를 백업한다.
 
 ```bash
-codex-obsidian-sync watch --vault "/absolute/path/to/vault" --interval 10
+python3 scripts/capture_cutover_backup.py \
+  --output-dir "/tmp/codex-obsidian-sync-backup-$(date +%Y%m%dT%H%M%S%z)" \
+  --state-file "$HOME/.codex/obsidian-sync/sync-state.json"
+
+python3 scripts/audit_cutover_backup.py \
+  --backup-dir "/tmp/codex-obsidian-sync-backup-<timestamp>"
 ```
+
+```bash
+codex-obsidian-sync stop
+
+cd /path/to/codex-obsidian-sync
+pipx install -e . --force
+pipx ensurepath
+
+codex-obsidian-sync setup --vault "/absolute/path/to/vault" --cooldown 1m
+codex-obsidian-sync start
+codex-obsidian-sync status --json
+```
+
+plist가 Python module invocation으로 돌아왔는지 확인한다.
+
+```bash
+python3 - <<'PY'
+import plistlib
+from pathlib import Path
+
+plist = Path.home() / "Library/LaunchAgents/com.codex.obsidian-sync.plist"
+args = plistlib.loads(plist.read_bytes())["ProgramArguments"]
+print(args)
+assert "-m" in args
+assert "codex_obsidian_sync.cli" in args
+assert "service-run" in args
+PY
+```
+
+rollback 검증 기준:
+
+- `launchctl print gui/$UID/com.codex.obsidian-sync`가 성공한다
+- `codex-obsidian-sync status --json`이 JSON으로 parse된다
+- `ProgramArguments`가 Rust binary path가 아니라 Python module invocation을 가리킨다
+- rollback 직후 첫 실행 전에는 copied vault 또는 dry-run으로 note/state 차이를 확인한다
 
 ## 가장 자주 쓰는 흐름
 
@@ -275,12 +435,11 @@ codex-obsidian-sync status
 
 권장 순서:
 
-1. `pipx install -e .`
-2. `pipx ensurepath`
-3. 새 shell을 열거나 shell config를 다시 로드
-4. `codex-obsidian-sync setup --vault "/absolute/path/to/vault" --cooldown 1m`
-5. `codex-obsidian-sync start`
-6. `codex-obsidian-sync status`
+1. GitHub Release binary를 설치하거나 local testing용 `cargo install --path rust --locked`를 실행
+2. `~/.local/bin` 또는 `~/.cargo/bin`이 `PATH`에 있는지 확인
+3. `codex-obsidian-sync setup --vault "/absolute/path/to/vault" --cooldown 1m`
+4. `codex-obsidian-sync start`
+5. `codex-obsidian-sync status`
 
 ### 설정 변경
 
@@ -312,7 +471,7 @@ codex-obsidian-sync service-run
 또는:
 
 ```bash
-codex-obsidian-sync sync-once --vault "/absolute/path/to/vault"
+codex-obsidian-sync sync-once --vault "/absolute/path/to/vault" --write
 ```
 
 ## 저장 파일 위치
@@ -372,8 +531,9 @@ codex-obsidian-sync start
 
 1. `codex-obsidian-sync status`
 2. `last_error` 확인
-3. `codex-obsidian-sync service-run` 수동 실행
-4. `status --json`에서 `last_summary`가 바뀌는지 확인
+3. Rust migration build라면 `~/.codex/obsidian-sync/config.toml`에 `rust_service_write_enabled = true`가 있는지 확인
+4. `codex-obsidian-sync service-run` 수동 실행
+5. `status --json`에서 `last_summary`가 바뀌는지 확인
 
 ### 실제 trigger 없이 한 번만 확인하고 싶다
 
@@ -393,6 +553,85 @@ codex-obsidian-sync start
 ```bash
 cat ~/.codex/obsidian-sync/config.toml
 ```
+
+### Rust dry-run 결과를 Python과 비교하고 싶다
+
+repo checkout에서 comparison harness를 실행한다.
+
+```bash
+cd /path/to/codex-obsidian-sync
+/opt/homebrew/bin/python3.13 scripts/compare_python_rust_sync.py --output-dir /tmp/codex-obsidian-sync-compare
+```
+
+private fixture가 있으면 local fixture path를 명시한다.
+
+```bash
+/opt/homebrew/bin/python3.13 scripts/compare_python_rust_sync.py \
+  --output-dir /tmp/codex-obsidian-sync-compare \
+  --local-fixture /tmp/codex-obsidian-sync-phase14-anon-fixture
+```
+
+확인할 파일:
+
+- `artifacts/summary.diff.json`
+- `artifacts/notes.diff`
+- `artifacts/state.diff.json`
+- `artifacts/input_hashes.json`
+
+### `skipped_invalid`가 늘어난다
+
+`inspect-recent`로 최근 후보를 본 뒤, 문제 rollout 하나를 `inspect-rollout`으로 확인한다.
+malformed rollout은 해당 rollout만 건너뛰고 전체 sync는 계속 성공해야 한다.
+
+```bash
+codex-obsidian-sync inspect-recent --limit 10
+codex-obsidian-sync inspect-rollout /absolute/path/to/rollout.jsonl
+```
+
+### stale offset이 의심된다
+
+offset은 source of truth가 아니라 성능 힌트다.
+Rust sync는 stale offset이면 full rebuild로 복구해야 하며, 이때 `skipped_invalid`가 증가하면 안 된다.
+의심될 때는 dry-run output을 새 directory에 만들고 `notes.diff`와 temp `sync-state.json`을 확인한다.
+
+```bash
+codex-obsidian-sync sync-once --dry-run-output /tmp/codex-obsidian-sync-stale-offset-check
+```
+
+## Release Checklist
+
+release tag를 만들기 전:
+
+- `cargo fmt --manifest-path rust/Cargo.toml --check`
+- `cargo test --manifest-path rust/Cargo.toml`
+- `cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings`
+- `cargo build --release --manifest-path rust/Cargo.toml`
+- signing/notarization decision 확인
+
+GitHub Release:
+
+- tag는 `v<Cargo.toml package version>` 형식이어야 한다
+- `aarch64-apple-darwin` artifact와 checksum이 있어야 한다
+- `x86_64-apple-darwin` artifact와 checksum이 있어야 한다
+- release workflow는 `aarch64` artifact를 arm64 macOS runner에서, `x86_64` artifact를 Intel macOS runner에서 실행 smoke 해야 한다
+- release workflow는 target별 release artifact smoke summary와 Homebrew smoke summary를 release asset으로 남겨야 한다
+- release workflow는 checksum 검증 후 `codex-obsidian-sync.rb` Homebrew formula를 생성하고 Ruby 문법 검사를 통과해야 한다
+- release workflow는 GitHub Release publish 후 생성된 formula로 Homebrew install/version/test/uninstall smoke를 통과해야 한다
+- release workflow는 Homebrew smoke 후 `scripts/audit_release_evidence.py`로 artifact, checksum, formula, smoke summary 전체를 다시 검증해야 한다
+- release workflow는 smoke summary 업로드 후 `scripts/audit_published_release.py`로 published GitHub Release asset 전체를 다시 내려받아 검증하고 audit summary를 release asset으로 남겨야 한다
+- downloaded `.tar.gz`는 같은 directory의 `.sha256`으로 `shasum -a 256 -c`가 통과해야 한다
+- installed binary는 `codex-obsidian-sync --version`으로 release version을 보고해야 한다
+- `python3 scripts/smoke_release_artifact.py --tarball <artifact>.tar.gz --checksum <artifact>.tar.gz.sha256 --expected-version <version>`이 install/version/status/inspect/dry-run/uninstall smoke를 통과해야 한다
+- `python3 scripts/audit_release_evidence.py --version <tag> --release-dir dist --homebrew-formula dist/codex-obsidian-sync.rb`가 통과해야 한다
+- `python3 scripts/audit_published_release.py --version <tag> --download-dir /tmp/codex-obsidian-sync-release-<tag>`가 통과해야 한다
+
+Homebrew cutover:
+
+- formula URL은 GitHub Release tarball을 가리켜야 한다
+- formula checksum은 published `.sha256`과 일치해야 한다
+- `python3 scripts/generate_homebrew_formula.py --version <tag> --aarch64-checksum <aarch64>.sha256 --x86-64-checksum <x86_64>.sha256 --output <tap>/Formula/codex-obsidian-sync.rb`로 formula를 생성한다
+- `python3 scripts/smoke_homebrew_formula.py --formula <tap>/Formula/codex-obsidian-sync.rb --expected-version <tag>`가 `brew install`, `codex-obsidian-sync --version`, `status --json`, `sync-once` dry-run vault 불변성, `brew test`, `brew uninstall` smoke를 통과해야 한다
+- cutover window 동안 Python/pipx rollback path를 유지한다
 
 ## 참고
 

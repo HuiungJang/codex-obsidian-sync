@@ -1,0 +1,15 @@
+$ codex-obsidian-sync inspect-recent --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync inspect-recent [-h] [--codex-home CODEX_HOME]
+                                          [--limit LIMIT]
+                                          [--include-subagents]
+
+options:
+  -h, --help            show this help message and exit
+  --codex-home CODEX_HOME
+  --limit LIMIT
+  --include-subagents
+
+[stderr]

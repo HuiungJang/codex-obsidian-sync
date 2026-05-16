@@ -1,0 +1,27 @@
+$ codex-obsidian-sync sync-once --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync sync-once [-h] [--vault VAULT]
+                                     [--codex-home CODEX_HOME]
+                                     [--state-file STATE_FILE]
+                                     [--lock-file LOCK_FILE]
+                                     [--include-subagents]
+                                     [--log-level LOG_LEVEL]
+                                     [--recent-days RECENT_DAYS]
+                                     [--candidate-file-limit CANDIDATE_FILE_LIMIT]
+                                     [--candidate-bytes-limit CANDIDATE_BYTES_LIMIT]
+
+options:
+  -h, --help            show this help message and exit
+  --vault VAULT
+  --codex-home CODEX_HOME
+  --state-file STATE_FILE
+  --lock-file LOCK_FILE
+  --include-subagents
+  --log-level LOG_LEVEL
+  --recent-days RECENT_DAYS
+  --candidate-file-limit CANDIDATE_FILE_LIMIT
+  --candidate-bytes-limit CANDIDATE_BYTES_LIMIT
+
+[stderr]

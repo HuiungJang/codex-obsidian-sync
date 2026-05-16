@@ -1,0 +1,10 @@
+$ codex-obsidian-sync stop --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync stop [-h]
+
+options:
+  -h, --help  show this help message and exit
+
+[stderr]

@@ -1,0 +1,11 @@
+$ codex-obsidian-sync service-run --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync service-run [-h] [--log-level LOG_LEVEL]
+
+options:
+  -h, --help            show this help message and exit
+  --log-level LOG_LEVEL
+
+[stderr]

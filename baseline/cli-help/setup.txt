@@ -1,0 +1,12 @@
+$ codex-obsidian-sync setup --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync setup [-h] [--vault VAULT] [--cooldown COOLDOWN]
+
+options:
+  -h, --help            show this help message and exit
+  --vault VAULT
+  --cooldown, --interval COOLDOWN
+
+[stderr]

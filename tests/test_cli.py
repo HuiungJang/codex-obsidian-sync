@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import plistlib
+import sys
 import unittest
 from io import StringIO
 from pathlib import Path
@@ -60,6 +61,87 @@ class CliTests(unittest.TestCase):
         plist_content = write_plist_mock.call_args.args[1]
         payload = plistlib.loads(plist_content.encode("utf-8"))
         self.assertEqual(payload["StartInterval"], 60)
+
+    def test_setup_rolls_back_rust_plist_to_python_invocation_on_copied_paths(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            vault = root / "copied-vault"
+            codex_home = root / ".codex"
+            plist_path = root / "LaunchAgents" / "com.codex.obsidian-sync.plist"
+            stdout_path = root / "logs" / "stdout.log"
+            stderr_path = root / "logs" / "stderr.log"
+            config_path = root / "config.toml"
+            vault.mkdir()
+            codex_home.mkdir()
+            plist_path.parent.mkdir()
+            (vault / "existing.md").write_text("user note\n", encoding="utf-8")
+            save_toml_config(
+                config_path,
+                {
+                    "vault": str(vault),
+                    "interval_seconds": 10,
+                    "codex_home": str(codex_home),
+                    "launchd_plist_path": str(plist_path),
+                    "launchd_stdout_path": str(stdout_path),
+                    "launchd_stderr_path": str(stderr_path),
+                    "extra_flag": True,
+                },
+            )
+            plist_path.write_bytes(
+                plistlib.dumps(
+                    {
+                        "Label": "com.codex.obsidian-sync",
+                        "ProgramArguments": [
+                            "/opt/homebrew/bin/codex-obsidian-sync",
+                            "--config",
+                            str(config_path),
+                            "service-run",
+                        ],
+                        "StartInterval": 10,
+                        "RunAtLoad": False,
+                        "KeepAlive": False,
+                        "ThrottleInterval": 1,
+                        "StandardOutPath": str(stdout_path),
+                        "StandardErrorPath": str(stderr_path),
+                    },
+                    fmt=plistlib.FMT_XML,
+                    sort_keys=False,
+                )
+            )
+
+            stdout = StringIO()
+            with patch("sys.stdout", stdout):
+                exit_code = main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "setup",
+                        "--vault",
+                        str(vault),
+                        "--cooldown",
+                        "1m",
+                    ]
+                )
+
+            saved = load_toml_config(config_path)
+            payload = plistlib.loads(plist_path.read_bytes())
+            copied_note = (vault / "existing.md").read_text(encoding="utf-8")
+            vault_resolved = str(vault.resolve())
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(saved["extra_flag"])
+        self.assertEqual(saved["vault"], vault_resolved)
+        self.assertEqual(saved["interval_seconds"], 60)
+        self.assertEqual(copied_note, "user note\n")
+        self.assertEqual(payload["ProgramArguments"][0], sys.executable)
+        self.assertEqual(
+            payload["ProgramArguments"][1:5],
+            ["-m", "codex_obsidian_sync.cli", "--config", str(config_path)],
+        )
+        self.assertEqual(payload["ProgramArguments"][5], "service-run")
+        self.assertNotIn("codex-obsidian-sync", "\n".join(payload["ProgramArguments"]))
+        self.assertEqual(payload["StandardOutPath"], str(stdout_path))
+        self.assertEqual(payload["StandardErrorPath"], str(stderr_path))
 
     def test_start_prompts_for_missing_config_and_bootstraps_agent(self) -> None:
         with TemporaryDirectory() as temp_dir:

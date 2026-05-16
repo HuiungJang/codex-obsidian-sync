@@ -58,6 +58,14 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn(bearer_token, redacted)
         self.assertEqual(redacted, "Authorization: [REDACTED_BEARER_TOKEN]")
 
+    def test_redacts_backtick_wrapped_bearer_tokens(self) -> None:
+        bearer_token = "abc.def+/ghi=="
+
+        redacted = redact_text(f"`Authorization: Bearer {bearer_token}`")
+
+        self.assertNotIn(bearer_token, redacted)
+        self.assertEqual(redacted, "`Authorization: [REDACTED_BEARER_TOKEN]`")
+
     def test_redacts_common_secret_assignment_names(self) -> None:
         secret_value = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
 

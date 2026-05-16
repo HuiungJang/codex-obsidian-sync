@@ -1,0 +1,21 @@
+pub mod cli;
+pub mod config;
+pub mod discovery;
+pub mod dry_run_output;
+pub mod error;
+pub mod inspect;
+pub mod intervals;
+pub mod launchd;
+pub mod lock;
+pub mod models;
+pub mod parser;
+pub mod redaction;
+pub mod render;
+pub mod service_runner;
+pub mod service_state;
+pub mod state_store;
+pub mod status_snapshot;
+pub mod sync;
+pub mod writer;
+
+pub const BINARY_NAME: &str = "codex-obsidian-sync";
