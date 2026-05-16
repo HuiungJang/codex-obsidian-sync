@@ -186,8 +186,7 @@ def validate_loaded_snapshot(
         reasons.append(f"{name}: launchctl print did not return a loaded service")
     elif not launchctl_contains_label(launchctl, expected_label):
         reasons.append(f"{name}: launchctl print did not include expected label")
-    if status.get("last_error") not in (None, "none", "never run"):
-        reasons.append(f"{name}: last_error is {status.get('last_error')}")
+    validate_last_error_clear(status, name, reasons)
     if not program_arguments:
         reasons.append(f"{name}: LaunchAgent ProgramArguments are missing")
     else:
@@ -227,6 +226,7 @@ def validate_stopped_snapshot(status: dict[str, Any], launchctl: str, *, expecte
     )
     if looks_loaded(launchctl):
         reasons.append("stopped: launchctl print still looks loaded")
+    validate_last_error_clear(status, "stopped", reasons)
     return reasons
 
 
@@ -243,6 +243,11 @@ def validate_status_flag(
     if value is expected:
         return
     reasons.append(bool_mismatch_reason if isinstance(value, bool) else type_mismatch_reason)
+
+
+def validate_last_error_clear(status: dict[str, Any], name: str, reasons: list[str]) -> None:
+    if status.get("last_error") not in (None, "none", "never run"):
+        reasons.append(f"{name}: last_error is {status.get('last_error')}")
 
 
 def validate_status_plist_paths(

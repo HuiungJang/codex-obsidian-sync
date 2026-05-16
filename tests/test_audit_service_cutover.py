@@ -365,6 +365,23 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("stopped: status launchd_label does not match expected label", report["no_go_reasons"])
 
+    def test_fails_when_stopped_status_has_last_error(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            status = json.loads(files["stopped_status"].read_text(encoding="utf-8"))
+            status["last_error"] = "launchctl bootout failed"
+            files["stopped_status"].write_text(json.dumps(status) + "\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("stopped: last_error is launchctl bootout failed", report["no_go_reasons"])
+
     def test_fails_when_status_plist_paths_differ(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)
