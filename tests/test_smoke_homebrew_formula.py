@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -14,6 +15,7 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
             root = Path(temp_dir)
             formula = root / "codex-obsidian-sync.rb"
             formula.write_text("class CodexObsidianSync < Formula\nend\n", encoding="utf-8")
+            formula_sha256 = hashlib.sha256(formula.read_bytes()).hexdigest()
             brew = write_fake_brew(root, version="0.1.0")
             output = root / "summary.json"
 
@@ -39,6 +41,7 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report["ok"])
+        self.assertEqual(report["formula_sha256"], formula_sha256)
         self.assertEqual(report["version"], "codex-obsidian-sync 0.1.0")
         self.assertTrue(report["installed_binary"].endswith("/bin/codex-obsidian-sync"))
         self.assertFalse(report["installed_after"])

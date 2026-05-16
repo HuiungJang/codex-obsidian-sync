@@ -1048,6 +1048,7 @@ def write_homebrew_smoke_summary(
             {
                 "ok": True,
                 "formula": str(formula.resolve()),
+                "formula_sha256": hashlib.sha256(formula.resolve().read_bytes()).hexdigest(),
                 "expected_version": "0.1.0",
                 "version": version,
                 "installed_binary": installed_binary,

@@ -343,6 +343,7 @@ def write_homebrew_smoke_summary(release_dir: Path, formula: Path) -> None:
             {
                 "ok": True,
                 "formula": str(formula.resolve()),
+                "formula_sha256": hashlib.sha256(formula.resolve().read_bytes()).hexdigest(),
                 "expected_version": "0.1.0",
                 "version": "codex-obsidian-sync 0.1.0",
                 "installed_binary": installed_binary,

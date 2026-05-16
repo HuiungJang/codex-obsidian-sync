@@ -413,9 +413,13 @@ def audit_homebrew_smoke_summary(
 
     commands = summary.get("commands")
     installed_binary = summary.get("installed_binary")
+    formula_value = summary.get("formula")
+    expected_formula_sha256 = formula_sha256(formula_path)
     details.update(
         {
             "ok": summary.get("ok"),
+            "formula_sha256": summary.get("formula_sha256"),
+            "expected_formula_sha256": expected_formula_sha256,
             "summary_expected_version": summary.get("expected_version"),
             "version": summary.get("version"),
             "installed_binary": installed_binary,
@@ -434,8 +438,10 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke expected_version does not match release version")
     if summary.get("version") != f"{FORMULA_NAME} {version}":
         reasons.append("Homebrew smoke version does not match release version")
-    if summary_path_name(summary.get("formula")) != formula_path.name:
+    if summary_path_name(formula_value) != formula_path.name:
         reasons.append("Homebrew smoke formula does not match generated formula")
+    if summary.get("formula_sha256") != expected_formula_sha256:
+        reasons.append("Homebrew smoke formula checksum does not match generated formula")
     if summary.get("installed_after") is not False:
         reasons.append("Homebrew smoke did not prove the formula was uninstalled")
     for field in ("status_configured", "status_json_parsed", "dry_run", "vault_unchanged"):
@@ -449,10 +455,11 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke commands are missing")
     else:
         required_commands = {
-            "install": ("install", "--formula"),
             "test": ("test", FORMULA_NAME),
             "uninstall": ("uninstall", "--formula", FORMULA_NAME),
         }
+        if not has_successful_command_with_next_arg(commands, ("install", "--formula"), formula_value):
+            reasons.append("Homebrew smoke did not record successful brew install for recorded formula")
         for label, sequence in required_commands.items():
             if not has_successful_command(commands, sequence):
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
@@ -711,6 +718,23 @@ def has_successful_command(commands: list[Any], sequence: tuple[str, ...]) -> bo
     return False
 
 
+def has_successful_command_with_next_arg(commands: list[Any], sequence: tuple[str, ...], expected_arg: Any) -> bool:
+    if not isinstance(expected_arg, str) or not expected_arg:
+        return False
+    for command in commands:
+        if not isinstance(command, dict) or command.get("returncode") != 0:
+            continue
+        command_value = command.get("command")
+        if not isinstance(command_value, list):
+            continue
+        parts = [str(part) for part in command_value]
+        width = len(sequence)
+        for index in range(0, len(parts) - width):
+            if tuple(parts[index : index + width]) == sequence and parts[index + width] == expected_arg:
+                return True
+    return False
+
+
 def has_successful_version_command(commands: list[Any], expected_output: str, expected_binary: Any) -> bool:
     for command in commands:
         if not isinstance(command, dict) or command.get("returncode") != 0:
@@ -766,6 +790,15 @@ def same_path(left: Path, right: Path) -> bool:
         return left.samefile(right)
     except OSError:
         return left == right
+
+
+def formula_sha256(path: Path) -> str | None:
+    try:
+        if not path.is_file():
+            return None
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def run_capture(command: list[str]) -> subprocess.CompletedProcess[str]:

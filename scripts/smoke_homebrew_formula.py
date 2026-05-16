@@ -46,6 +46,7 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
     formula = formula.expanduser().resolve()
     if not formula.is_file():
         raise RuntimeError(f"Formula is missing: {formula}")
+    formula_sha256 = hashlib.sha256(formula.read_bytes()).hexdigest()
 
     brew_path = resolve_executable(brew)
     if brew_path is None:
@@ -84,6 +85,7 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
         "ok": True,
         "generated_at": datetime.now(UTC).isoformat(),
         "formula": str(formula),
+        "formula_sha256": formula_sha256,
         "brew": str(brew_path),
         "expected_version": expected_version,
         "version": version_output,
