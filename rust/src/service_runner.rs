@@ -122,8 +122,10 @@ fn drain_pending(
         if let Some(next_eligible_at) =
             string_field(snapshot.get("next_eligible_at")).and_then(parse_iso)
         {
-            let sleep_seconds = (next_eligible_at - OffsetDateTime::now_utc()).whole_seconds();
-            if sleep_seconds > 0 && options.sleep_on_cooldown {
+            if let Some(sleep_seconds) =
+                cooldown_sleep_seconds(next_eligible_at, OffsetDateTime::now_utc())
+                && options.sleep_on_cooldown
+            {
                 thread::sleep(StdDuration::from_secs(sleep_seconds as u64));
                 continue;
             }
@@ -309,6 +311,11 @@ fn parse_iso(value: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(value, &Rfc3339).ok()
 }
 
+fn cooldown_sleep_seconds(next_eligible_at: OffsetDateTime, now: OffsetDateTime) -> Option<i64> {
+    let seconds = (next_eligible_at - now).whole_seconds();
+    (seconds > 0).then_some(seconds)
+}
+
 fn shift_iso(value: &str, seconds: u64) -> String {
     let base = parse_iso(value).unwrap_or_else(OffsetDateTime::now_utc);
     format_iso(base + Duration::seconds(seconds.max(1) as i64))
@@ -375,6 +382,24 @@ mod tests {
         assert_eq!(
             state["last_error_summary"],
             "previous service-run did not finish cleanly"
+        );
+    }
+
+    #[test]
+    fn cooldown_sleep_seconds_handles_clock_jumps() {
+        let now = parse_iso("2026-05-16T00:00:00+00:00").unwrap();
+
+        assert_eq!(
+            cooldown_sleep_seconds(parse_iso("2026-05-16T00:00:30+00:00").unwrap(), now),
+            Some(30)
+        );
+        assert_eq!(
+            cooldown_sleep_seconds(parse_iso("2026-05-15T23:59:30+00:00").unwrap(), now),
+            None
+        );
+        assert_eq!(
+            cooldown_sleep_seconds(parse_iso("2026-05-16T00:00:00+00:00").unwrap(), now),
+            None
         );
     }
 }
