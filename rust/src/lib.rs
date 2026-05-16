@@ -12,5 +12,6 @@ pub mod service_state;
 pub mod state_store;
 pub mod status_snapshot;
 pub mod sync;
+pub mod writer;
 
 pub const BINARY_NAME: &str = "codex-obsidian-sync-rs";

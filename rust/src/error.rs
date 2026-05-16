@@ -17,6 +17,9 @@ pub enum SyncError {
     #[error("dry-run output error")]
     DryRunOutput,
 
+    #[error("write error")]
+    Write,
+
     #[error("unsupported command")]
     UnsupportedCommand,
 }
