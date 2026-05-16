@@ -223,6 +223,56 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_uploaded_evidence_summary_generated_at_is_missing(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            summary = json.loads(assets["release-evidence-summary.json"].decode("utf-8"))
+            del summary["generated_at"]
+            assets["release-evidence-summary.json"] = json.dumps(summary).encode("utf-8")
+            opener = FakeGitHubOpener(assets)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "uploaded release evidence summary generated_at is missing or invalid",
+            result["no_go_reasons"],
+        )
+
+    def test_fails_when_uploaded_evidence_summary_generated_at_is_invalid(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            summary = json.loads(assets["release-evidence-summary.json"].decode("utf-8"))
+            summary["generated_at"] = "2026-05-15 12:00:00"
+            assets["release-evidence-summary.json"] = json.dumps(summary).encode("utf-8")
+            opener = FakeGitHubOpener(assets)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "uploaded release evidence summary generated_at is missing or invalid",
+            result["no_go_reasons"],
+        )
+
     def test_fails_when_uploaded_evidence_summary_omits_checks(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)

@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -407,6 +408,16 @@ def is_sha256_digest(value: Any) -> bool:
     return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
+def is_parseable_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
 def read_uploaded_evidence_summary(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {"ok": False, "no_go_reasons": ["release evidence summary asset is missing"]}
@@ -426,6 +437,8 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, ta
         reasons.append("uploaded release evidence summary tag does not match requested tag")
     if summary.get("repository") != repository:
         reasons.append("uploaded release evidence summary repository does not match requested repository")
+    if not is_parseable_timestamp(summary.get("generated_at")):
+        reasons.append("uploaded release evidence summary generated_at is missing or invalid")
     no_go = summary.get("no_go_reasons")
     if no_go != []:
         reasons.append("uploaded release evidence summary no_go_reasons is not an empty list")
