@@ -39,6 +39,10 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(report["present_checkpoints"], ["+5m", "+1h", "+4h", "+24h"])
         self.assertEqual(report["records"][0]["status_launchd_label"], "com.codex.obsidian-sync")
         self.assertEqual(report["records"][0]["plist_label"], "com.codex.obsidian-sync")
+        self.assertEqual(
+            report["records"][0]["program_arguments"],
+            [expected_binary, "--config", "/tmp/config.toml", "service-run"],
+        )
         self.assertEqual(report["records"][0]["config_path"], "/tmp/config.toml")
 
     def test_fails_when_required_checkpoint_is_missing(self) -> None:
@@ -256,6 +260,102 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["ok"])
         self.assertIn("+4h: ProgramArguments count is not the Rust launchd shape", report["no_go_reasons"])
+
+    def test_fails_when_record_program_arguments_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(root, expected_binary=expected_binary)
+            record_path = root / "plus1h.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            del record["program_arguments"]
+            record_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("+1h: ProgramArguments are missing or malformed", report["no_go_reasons"])
+
+    def test_fails_when_record_program_arguments_are_not_exact_rust_shape(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(
+                root,
+                expected_binary=expected_binary,
+                program_arguments={"+1h": [expected_binary, "service-run", "--config", "/tmp/config.toml"]},
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "+1h: Rust LaunchAgent ProgramArguments must be exactly binary, --config, config path, service-run",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_record_program_arguments_config_disagrees_with_recorded_config(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_marker(root)
+            write_records(
+                root,
+                expected_binary=expected_binary,
+                program_arguments={"+1h": [expected_binary, "--config", "/tmp/other-config.toml", "service-run"]},
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(root),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "+1h: ProgramArguments --config path does not match recorded config_path",
+            report["no_go_reasons"],
+        )
 
     def test_fails_when_recorded_at_regresses(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
@@ -517,6 +617,7 @@ def write_records(
     counter_overrides: dict[str, dict[str, object]] | None = None,
     config_paths: dict[str, str | None] | None = None,
     program_arguments_counts: dict[str, int] | None = None,
+    program_arguments: dict[str, list[str]] | None = None,
 ) -> None:
     omit = omit or set()
     failed = failed or set()
@@ -527,6 +628,7 @@ def write_records(
     counter_overrides = counter_overrides or {}
     config_paths = config_paths or {}
     program_arguments_counts = program_arguments_counts or {}
+    program_arguments = program_arguments or {}
     checkpoints = {
         "+5m": ("plus5m.json", "2026-05-16T00:05:00+00:00"),
         "+1h": ("plus1h.json", "2026-05-16T01:00:00+00:00"),
@@ -540,6 +642,10 @@ def write_records(
         counters = {"skipped_invalid": 0, "processed": 12, "appended": 1, "rewritten": 11}
         counters.update(counter_overrides.get(checkpoint, {}))
         config_path = config_paths.get(checkpoint, "/tmp/config.toml")
+        record_arguments = program_arguments.get(
+            checkpoint,
+            [expected_binary, "--config", config_path or "/tmp/config.toml", "service-run"],
+        )
         record = {
             "ok": not is_failed,
             "checkpoint": checkpoint,
@@ -550,6 +656,7 @@ def write_records(
             "plist_label": plist_labels.get(checkpoint, "com.codex.obsidian-sync"),
             "launchd_loaded": True,
             "launchctl_loaded": True,
+            "program_arguments": record_arguments,
             "program_arg0": expected_binary,
             "program_arguments_count": program_arguments_counts.get(checkpoint, 4),
             "service_command": "service-run",

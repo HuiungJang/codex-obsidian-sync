@@ -180,6 +180,7 @@ def validate_record(
         reasons.append(f"{expected_checkpoint}: ProgramArguments[0] does not match expected binary")
     if record.get("program_arguments_count") != 4:
         reasons.append(f"{expected_checkpoint}: ProgramArguments count is not the Rust launchd shape")
+    reasons.extend(validate_program_arguments(record, expected_checkpoint, expected_program_arg0))
     config_path = record.get("config_path")
     if not isinstance(config_path, str) or not config_path:
         reasons.append(f"{expected_checkpoint}: config_path is missing")
@@ -250,6 +251,7 @@ def summarize_record(record: dict[str, Any], path: Path) -> dict[str, Any]:
         "recorded_at": record.get("recorded_at"),
         "status_launchd_label": record.get("status_launchd_label"),
         "plist_label": record.get("plist_label"),
+        "program_arguments": record.get("program_arguments"),
         "program_arg0": record.get("program_arg0"),
         "config_path": record.get("config_path"),
         "last_success": record.get("last_success"),
@@ -259,6 +261,35 @@ def summarize_record(record: dict[str, Any], path: Path) -> dict[str, Any]:
         "appended": record.get("appended"),
         "rewritten": record.get("rewritten"),
     }
+
+
+def validate_program_arguments(
+    record: dict[str, Any],
+    expected_checkpoint: str,
+    expected_program_arg0: str | None,
+) -> list[str]:
+    reasons: list[str] = []
+    value = record.get("program_arguments")
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        return [f"{expected_checkpoint}: ProgramArguments are missing or malformed"]
+
+    if len(value) != 4 or value[1] != "--config" or value[3] != "service-run":
+        reasons.append(
+            f"{expected_checkpoint}: Rust LaunchAgent ProgramArguments must be exactly "
+            "binary, --config, config path, service-run"
+        )
+        return reasons
+
+    program_arg0, _, config_path, service_command = value
+    if expected_program_arg0 and program_arg0 != expected_program_arg0:
+        reasons.append(f"{expected_checkpoint}: ProgramArguments[0] does not match expected binary")
+    if record.get("program_arg0") != program_arg0:
+        reasons.append(f"{expected_checkpoint}: ProgramArguments[0] does not match recorded program_arg0")
+    if record.get("config_path") != config_path:
+        reasons.append(f"{expected_checkpoint}: ProgramArguments --config path does not match recorded config_path")
+    if record.get("service_command") != service_command:
+        reasons.append(f"{expected_checkpoint}: ProgramArguments service command does not match recorded service_command")
+    return reasons
 
 
 def parse_iso_datetime(value: Any) -> datetime | None:

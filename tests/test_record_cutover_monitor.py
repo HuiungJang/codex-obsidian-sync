@@ -54,6 +54,10 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertEqual(record["checkpoint"], "+5m")
         self.assertEqual(record["status_launchd_label"], "com.codex.obsidian-sync")
         self.assertEqual(record["plist_label"], "com.codex.obsidian-sync")
+        self.assertEqual(
+            record["program_arguments"],
+            [expected_binary, "--config", "/tmp/config.toml", "service-run"],
+        )
         self.assertEqual(record["program_arg0"], expected_binary)
         self.assertEqual(record["config_path"], "/tmp/config.toml")
         self.assertEqual(record["service_command"], "service-run")

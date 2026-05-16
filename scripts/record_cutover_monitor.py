@@ -266,6 +266,7 @@ def build_record(
         "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": launchctl_loaded,
         "plist_path": status.get("plist_path"),
+        "program_arguments": program_arguments,
         "program_arg0": program_arguments[0] if program_arguments else None,
         "program_arguments_count": len(program_arguments),
         "config_path": config_path,
