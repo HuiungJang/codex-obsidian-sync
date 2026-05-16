@@ -26,6 +26,9 @@ pub enum SyncError {
     #[error("lock error")]
     Lock,
 
+    #[error("launchd error")]
+    Launchd,
+
     #[error("unsupported command")]
     UnsupportedCommand,
 }

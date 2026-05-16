@@ -7,6 +7,7 @@ use uzers::os::unix::UserExt;
 
 use crate::cli::SyncOnceArgs;
 use crate::error::SyncError;
+use crate::writer::write_state_file;
 
 const DEFAULT_STATE_DIRNAME: &str = "obsidian-sync";
 const DEFAULT_LAUNCHD_LABEL: &str = "com.codex.obsidian-sync";
@@ -118,6 +119,16 @@ pub fn load_toml_config(path: Option<&Path>) -> Result<TomlConfig, SyncError> {
     let content = fs::read_to_string(config_path).map_err(|_| SyncError::Config)?;
     let raw = content.parse::<Table>().map_err(|_| SyncError::Config)?;
     Ok(TomlConfig { raw })
+}
+
+pub fn save_toml_config(path: Option<&Path>, data: &Table) -> Result<PathBuf, SyncError> {
+    let config_path = resolve_config_path(path)?;
+    let mut content = toml::to_string(data).map_err(|_| SyncError::Config)?;
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    write_state_file(&config_path, &content)?;
+    Ok(config_path)
 }
 
 pub fn resolve_service_paths(

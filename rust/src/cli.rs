@@ -14,10 +14,20 @@ pub struct Cli {
 
 #[derive(Debug)]
 pub enum Command {
+    Setup(SetupArgs),
+    Start,
+    Stop,
     SyncOnce(SyncOnceArgs),
     InspectRollout(InspectRolloutArgs),
     InspectRecent(InspectRecentArgs),
     Status(StatusArgs),
+    ServiceRun,
+}
+
+#[derive(Debug)]
+pub struct SetupArgs {
+    pub vault: Option<PathBuf>,
+    pub cooldown: Option<String>,
 }
 
 #[derive(Debug)]
@@ -66,6 +76,12 @@ impl Cli {
         let matches = RawCli::command().try_get_matches_from(args)?;
         let raw = RawCli::from_arg_matches(&matches)?;
         let command = match raw.command {
+            RawCommand::Setup(raw_args) => Command::Setup(SetupArgs {
+                vault: raw_args.vault,
+                cooldown: raw_args.cooldown,
+            }),
+            RawCommand::Start => Command::Start,
+            RawCommand::Stop => Command::Stop,
             RawCommand::InspectRollout(raw_args) => Command::InspectRollout(InspectRolloutArgs {
                 rollout_path: raw_args.rollout_path,
                 session_index: raw_args.session_index,
@@ -98,6 +114,7 @@ impl Cli {
                     candidate_bytes_limit: raw_args.candidate_bytes_limit,
                 })
             }
+            RawCommand::ServiceRun => Command::ServiceRun,
         };
 
         Ok(Self {
@@ -122,6 +139,18 @@ struct RawCli {
 
 #[derive(Debug, Subcommand)]
 enum RawCommand {
+    #[command(name = "setup")]
+    #[command(about = "Write config and LaunchAgent plist")]
+    Setup(RawSetupArgs),
+
+    #[command(name = "start")]
+    #[command(about = "Start the LaunchAgent")]
+    Start,
+
+    #[command(name = "stop")]
+    #[command(about = "Stop the LaunchAgent")]
+    Stop,
+
     #[command(name = "inspect-rollout")]
     #[command(about = "Inspect one rollout file as redacted JSON")]
     InspectRollout(RawInspectRolloutArgs),
@@ -137,6 +166,23 @@ enum RawCommand {
     #[command(name = "sync-once")]
     #[command(about = "Run one dry-run sync pass")]
     SyncOnce(RawSyncOnceArgs),
+
+    #[command(name = "service-run", hide = true)]
+    ServiceRun,
+}
+
+#[derive(Debug, Args)]
+struct RawSetupArgs {
+    #[arg(long, value_name = "VAULT", help = "Obsidian vault root")]
+    vault: Option<PathBuf>,
+
+    #[arg(
+        long = "cooldown",
+        alias = "interval",
+        value_name = "INTERVAL",
+        help = "Cooldown such as 10s, 1m, or 2h"
+    )]
+    cooldown: Option<String>,
 }
 
 #[derive(Debug, Args)]

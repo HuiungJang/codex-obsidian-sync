@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use codex_obsidian_sync_rs::config::{
     SyncConfigOverrides, TomlConfig, default_codex_home, load_toml_config, resolve_sync_config,
+    save_toml_config,
 };
 
 #[test]
@@ -86,6 +87,51 @@ unknown_table = { keep = "yes" }
     assert_eq!(resolved.recent_days, 8);
     assert_eq!(resolved.log_level, "DEBUG");
     assert!(config.raw().contains_key("unknown_table"));
+}
+
+#[test]
+fn save_toml_config_preserves_unknown_keys() {
+    let root = temp_dir("save-toml");
+    let config_path = root.join("config.toml");
+    fs::write(
+        &config_path,
+        r#"
+vault = "/tmp/old-vault"
+interval_seconds = 10
+extra_flag = true
+"#,
+    )
+    .unwrap();
+
+    let config = load_toml_config(Some(&config_path)).unwrap();
+    let mut updated = config.raw().clone();
+    updated.insert(
+        "vault".to_owned(),
+        toml::Value::String("/tmp/new-vault".to_owned()),
+    );
+    updated.insert("interval_seconds".to_owned(), toml::Value::Integer(60));
+
+    save_toml_config(Some(&config_path), &updated).unwrap();
+    let reloaded = load_toml_config(Some(&config_path)).unwrap();
+
+    assert_eq!(
+        reloaded.raw().get("vault").and_then(toml::Value::as_str),
+        Some("/tmp/new-vault")
+    );
+    assert_eq!(
+        reloaded
+            .raw()
+            .get("interval_seconds")
+            .and_then(toml::Value::as_integer),
+        Some(60)
+    );
+    assert_eq!(
+        reloaded
+            .raw()
+            .get("extra_flag")
+            .and_then(toml::Value::as_bool),
+        Some(true)
+    );
 }
 
 #[test]
