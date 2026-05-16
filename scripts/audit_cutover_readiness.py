@@ -897,7 +897,7 @@ def has_successful_brew_command(commands: list[Any], sequence: tuple[str, ...]) 
             continue
         parts = [str(part) for part in command_value]
         width = len(sequence)
-        if parts[:1] == ["brew"] and tuple(parts[1 : 1 + width]) == sequence:
+        if parts and command_uses_brew(parts[0]) and tuple(parts[1 : 1 + width]) == sequence:
             return True
     return False
 
@@ -915,12 +915,16 @@ def has_successful_brew_command_with_next_arg(commands: list[Any], sequence: tup
         width = len(sequence)
         if (
             len(parts) > 1 + width
-            and parts[:1] == ["brew"]
+            and command_uses_brew(parts[0])
             and tuple(parts[1 : 1 + width]) == sequence
             and parts[1 + width] == expected_arg
         ):
             return True
     return False
+
+
+def command_uses_brew(command_arg0: str) -> bool:
+    return Path(command_arg0).name == "brew"
 
 
 def has_successful_version_command(commands: list[Any], expected_output: str, expected_binary: Any) -> bool:
