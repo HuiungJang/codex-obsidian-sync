@@ -337,6 +337,45 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_dir_contains_symlinked_artifact(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            release_dir.mkdir()
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            package = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
+            target = root / "outside-aarch64.tar.gz"
+            target.write_bytes(package.read_bytes())
+            package.unlink()
+            package.symlink_to(target)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release directory contents: release directory contains symlinks: "
+            "['codex-obsidian-sync-aarch64-apple-darwin.tar.gz']",
+            report["no_go_reasons"],
+        )
+
     def assertCheckOk(self, report: dict[str, object], name: str) -> None:
         checks = report["checks"]
         self.assertIsInstance(checks, list)

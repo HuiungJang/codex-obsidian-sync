@@ -169,8 +169,12 @@ def audit_release_dir_contents(release_dir: Path | None, formula_path: Path | No
     if not root.is_dir():
         return check("release directory contents", False, details, ["release directory is missing"])
 
+    symlinks = sorted(path.name for path in root.iterdir() if path.is_symlink())
     unexpected_files = sorted(path.name for path in root.iterdir() if path.is_file() and path.name not in expected_names)
+    details["symlinks"] = symlinks
     details["unexpected_files"] = unexpected_files
+    if symlinks:
+        reasons.append(f"release directory contains symlinks: {symlinks}")
     if unexpected_files:
         reasons.append(f"release directory contains unexpected files: {unexpected_files}")
     return check("release directory contents", not reasons, details, reasons)
