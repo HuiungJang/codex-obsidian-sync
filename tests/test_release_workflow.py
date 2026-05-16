@@ -45,6 +45,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/smoke_homebrew_formula.py", workflow)
         self.assertIn("scripts/audit_release_evidence.py", workflow)
         self.assertIn("scripts/audit_published_release.py", workflow)
+        self.assertEqual(workflow.count('--repository "${GITHUB_REPOSITORY}"'), 3)
         self.assertIn("--aarch64-checksum dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256", workflow)
         self.assertIn("--x86-64-checksum dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256", workflow)
         self.assertIn("--output dist/codex-obsidian-sync.rb", workflow)

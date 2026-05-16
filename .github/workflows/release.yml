@@ -118,6 +118,7 @@ jobs:
           set -euo pipefail
           python3 scripts/generate_homebrew_formula.py \
             --version "${GITHUB_REF_NAME}" \
+            --repository "${GITHUB_REPOSITORY}" \
             --aarch64-checksum dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256 \
             --x86-64-checksum dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256 \
             --output dist/codex-obsidian-sync.rb
@@ -157,6 +158,7 @@ jobs:
           set -euo pipefail
           python3 scripts/audit_release_evidence.py \
             --version "${GITHUB_REF_NAME}" \
+            --repository "${GITHUB_REPOSITORY}" \
             --release-dir dist \
             --homebrew-formula dist/codex-obsidian-sync.rb \
             --output dist/release-evidence-summary.json
@@ -188,6 +190,7 @@ jobs:
             rm -rf "/tmp/codex-obsidian-sync-published-release-${GITHUB_REF_NAME}"
             if python3 scripts/audit_published_release.py \
               --version "${GITHUB_REF_NAME}" \
+              --repository "${GITHUB_REPOSITORY}" \
               --download-dir "/tmp/codex-obsidian-sync-published-release-${GITHUB_REF_NAME}" \
               --output dist/published-release-audit.json; then
               exit 0
