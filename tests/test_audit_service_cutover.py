@@ -119,6 +119,22 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("stopped: status launchd_label does not match expected label", report["no_go_reasons"])
 
+    def test_refuses_symlinked_evidence_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            target = root / "external-post.plist"
+            target.write_bytes(files["post_plist"].read_bytes())
+            files["post_plist"].unlink()
+            files["post_plist"].symlink_to(target)
+
+            result = run_audit(files, python_binary, rust_binary)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("evidence file is a symlink", result.stderr)
+
 
 def run_audit(files: dict[str, Path], python_binary: str, rust_binary: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(

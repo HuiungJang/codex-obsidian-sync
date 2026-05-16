@@ -204,6 +204,7 @@ def looks_loaded(launchctl: str) -> bool:
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
+    reject_symlinked_evidence(path)
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise RuntimeError(f"JSON file is not an object: {path}")
@@ -211,6 +212,7 @@ def read_json_object(path: Path) -> dict[str, Any]:
 
 
 def read_plist(path: Path) -> dict[str, Any]:
+    reject_symlinked_evidence(path)
     value = plistlib.loads(path.read_bytes())
     if not isinstance(value, dict):
         raise RuntimeError(f"plist file is not a dictionary: {path}")
@@ -218,7 +220,13 @@ def read_plist(path: Path) -> dict[str, Any]:
 
 
 def read_text(path: Path) -> str:
+    reject_symlinked_evidence(path)
     return path.read_text(encoding="utf-8")
+
+
+def reject_symlinked_evidence(path: Path) -> None:
+    if path.expanduser().is_symlink():
+        raise RuntimeError(f"evidence file is a symlink: {path}")
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
