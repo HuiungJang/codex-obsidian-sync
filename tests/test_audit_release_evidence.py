@@ -100,6 +100,41 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_generated_at_is_missing(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            del summary["generated_at"]
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke generated_at is missing or invalid",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_did_not_uninstall_artifact(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -978,6 +1013,41 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_homebrew_smoke_generated_at_is_invalid(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "homebrew-smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["generated_at"] = "2026-05-16 12:00:00"
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke generated_at is missing or invalid",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_homebrew_smoke_install_command_uses_different_formula(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             root = Path(temp_dir)
@@ -1631,6 +1701,7 @@ def write_release_smoke_summaries(
             json.dumps(
                 {
                     "ok": target != failed_target,
+                    "generated_at": "2026-05-16T00:00:00+00:00",
                     "tarball": str(tarball),
                     "tarball_sha256": tarball_sha256 or hashlib.sha256(tarball.read_bytes()).hexdigest(),
                     "checksum": str(checksum),
@@ -1710,6 +1781,7 @@ def write_homebrew_smoke_summary(
     install_formula_path = install_formula or formula_path
     summary = {
         "ok": True,
+        "generated_at": "2026-05-16T00:00:00+00:00",
         "formula": formula_path,
         "formula_sha256": formula_sha256 or hashlib.sha256(formula.resolve().read_bytes()).hexdigest(),
         "expected_version": "0.1.0",

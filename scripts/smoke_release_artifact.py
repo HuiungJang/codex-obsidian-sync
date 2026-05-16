@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -189,6 +190,7 @@ def run_smoke(
 
     return {
         "ok": True,
+        "generated_at": datetime.now(UTC).isoformat(),
         "tarball": str(tarball),
         "tarball_sha256": tarball_sha256,
         "checksum": str(checksum),

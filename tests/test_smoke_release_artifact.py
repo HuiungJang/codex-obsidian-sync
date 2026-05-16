@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory, gettempdir
 
@@ -44,6 +45,7 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
 
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(report["ok"])
+                self.assertIsNotNone(datetime.fromisoformat(report["generated_at"]).tzinfo)
                 self.assertEqual(report["tarball_sha256"], hashlib.sha256(tarball.read_bytes()).hexdigest())
                 self.assertEqual(report["checksum_sha256"], hashlib.sha256(checksum.read_bytes()).hexdigest())
                 self.assertTrue(report["uninstalled"])

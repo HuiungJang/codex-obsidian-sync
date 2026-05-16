@@ -417,6 +417,7 @@ def audit_release_smoke_summary(
     details.update(
         {
             "ok": summary.get("ok"),
+            "generated_at": summary.get("generated_at"),
             "version": summary.get("version"),
             "tarball_sha256": summary.get("tarball_sha256"),
             "checksum_sha256": summary.get("checksum_sha256"),
@@ -435,6 +436,8 @@ def audit_release_smoke_summary(
     )
     if summary.get("ok") is not True:
         reasons.append("release smoke summary ok is not true")
+    if not is_parseable_timestamp(summary.get("generated_at")):
+        reasons.append("release smoke generated_at is missing or invalid")
     if summary.get("no_go_reasons") not in ([], None):
         reasons.append("release smoke summary contains no-go reasons")
     if summary.get("version") != f"{FORMULA_NAME} {version}":
@@ -523,6 +526,7 @@ def audit_homebrew_smoke_summary(
     details.update(
         {
             "ok": summary.get("ok"),
+            "generated_at": summary.get("generated_at"),
             "brew": brew_value,
             "formula_sha256": summary.get("formula_sha256"),
             "expected_formula_sha256": expected_formula_sha256,
@@ -541,6 +545,8 @@ def audit_homebrew_smoke_summary(
     )
     if summary.get("ok") is not True:
         reasons.append("Homebrew smoke summary ok is not true")
+    if not is_parseable_timestamp(summary.get("generated_at")):
+        reasons.append("Homebrew smoke generated_at is missing or invalid")
     if summary.get("no_go_reasons") not in ([], None):
         reasons.append("Homebrew smoke summary contains no-go reasons")
     if summary.get("expected_version") != version:
@@ -914,6 +920,16 @@ def summary_path_matches(value: Any, expected: Path | None) -> bool:
 
 def positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def is_parseable_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return timestamp.tzinfo is not None and timestamp.utcoffset() is not None
 
 
 def validate_status_flag(

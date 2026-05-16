@@ -1482,6 +1482,7 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
             json.dumps(
                 {
                     "ok": True,
+                    "generated_at": "2026-05-16T00:00:00+00:00",
                     "tarball": str(tarball),
                     "tarball_sha256": hashlib.sha256(tarball.read_bytes()).hexdigest(),
                     "checksum": str(checksum),
@@ -1555,6 +1556,7 @@ def write_homebrew_smoke_summary(
         json.dumps(
             {
                 "ok": True,
+                "generated_at": "2026-05-16T00:00:00+00:00",
                 "formula": str(formula.resolve()),
                 "formula_sha256": hashlib.sha256(formula.resolve().read_bytes()).hexdigest(),
                 "expected_version": "0.1.0",
