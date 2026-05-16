@@ -10,6 +10,10 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import audit_release_evidence
+
 
 class AuditReleaseEvidenceTests(unittest.TestCase):
     def test_reports_ready_from_complete_release_evidence(self) -> None:
@@ -51,6 +55,19 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertCheckOk(report, "release smoke summary:aarch64-apple-darwin")
         self.assertCheckOk(report, "release smoke summary:x86_64-apple-darwin")
         self.assertCheckOk(report, "homebrew smoke summary")
+
+    def test_refuses_symlinked_output_report_path(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            root = Path(temp_dir)
+            output_target = root / "target-report.json"
+            output = root / "release-evidence-summary.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            with self.assertRaisesRegex(RuntimeError, "output path is a symlink"):
+                audit_release_evidence.resolve_output_path(output)
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
 
     def test_fails_when_release_smoke_summary_is_not_ok(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
