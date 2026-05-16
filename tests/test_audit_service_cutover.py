@@ -66,6 +66,63 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("post: ProgramArguments[0] does not match expected binary", report["no_go_reasons"])
 
+    def test_fails_when_expected_rust_binary_is_relative(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("expected Rust ProgramArguments[0] must be an absolute path", report["no_go_reasons"])
+        self.assertIn("post: ProgramArguments[0] is not an absolute path", report["no_go_reasons"])
+
+    def test_fails_when_plist_program_arguments_is_not_a_list(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            files["post_plist"].write_bytes(
+                plistlib.dumps(
+                    {
+                        "Label": "com.codex.obsidian-sync",
+                        "ProgramArguments": rust_binary,
+                    },
+                    fmt=plistlib.FMT_XML,
+                    sort_keys=False,
+                )
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: LaunchAgent ProgramArguments is not a list", report["no_go_reasons"])
+
+    def test_fails_when_plist_program_arguments_contains_empty_value(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            write_plist(files["post_plist"], rust_binary, label="com.codex.obsidian-sync", extra_argument="")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "post: LaunchAgent ProgramArguments contains non-string or empty values",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_post_launchctl_does_not_find_service(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)
@@ -223,17 +280,20 @@ def write_status(path: Path, *, launchd_loaded: bool, label: str) -> None:
     )
 
 
-def write_plist(path: Path, program_arg0: str, *, label: str) -> None:
+def write_plist(path: Path, program_arg0: str, *, label: str, extra_argument: str | None = None) -> None:
+    program_arguments = [
+        program_arg0,
+        "--config",
+        "/tmp/config.toml",
+        "service-run",
+    ]
+    if extra_argument is not None:
+        program_arguments.append(extra_argument)
     path.write_bytes(
         plistlib.dumps(
             {
                 "Label": label,
-                "ProgramArguments": [
-                    program_arg0,
-                    "--config",
-                    "/tmp/config.toml",
-                    "service-run",
-                ],
+                "ProgramArguments": program_arguments,
             },
             fmt=plistlib.FMT_XML,
             sort_keys=False,

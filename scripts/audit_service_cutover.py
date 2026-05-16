@@ -102,6 +102,10 @@ def audit_service_cutover(
         no_go_reasons.append("pre and post ProgramArguments[0] are identical")
     if expected_python_program_arg0 == expected_rust_program_arg0:
         no_go_reasons.append("expected Python and Rust binaries must differ")
+    if not is_absolute_path(expected_python_program_arg0):
+        no_go_reasons.append("expected Python ProgramArguments[0] must be an absolute path")
+    if not is_absolute_path(expected_rust_program_arg0):
+        no_go_reasons.append("expected Rust ProgramArguments[0] must be an absolute path")
 
     return {
         "ok": not no_go_reasons,
@@ -124,7 +128,7 @@ def validate_loaded_snapshot(
     expected_label: str,
 ) -> list[str]:
     reasons: list[str] = []
-    program_arguments = list(plist.get("ProgramArguments") or [])
+    program_arguments = validated_program_arguments(plist.get("ProgramArguments"), name, reasons)
     plist_label = plist.get("Label")
     if not status.get("configured"):
         reasons.append(f"{name}: status reports configured=false")
@@ -141,6 +145,8 @@ def validate_loaded_snapshot(
     if not program_arguments:
         reasons.append(f"{name}: LaunchAgent ProgramArguments are missing")
     else:
+        if not is_absolute_path(program_arguments[0]):
+            reasons.append(f"{name}: ProgramArguments[0] is not an absolute path")
         if program_arguments[0] != expected_program_arg0:
             reasons.append(f"{name}: ProgramArguments[0] does not match expected binary")
         if program_arguments[-1] != "service-run":
@@ -162,7 +168,8 @@ def validate_stopped_snapshot(status: dict[str, Any], launchctl: str, *, expecte
 
 
 def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: str) -> dict[str, Any]:
-    program_arguments = list(plist.get("ProgramArguments") or [])
+    raw_program_arguments = plist.get("ProgramArguments")
+    program_arguments = raw_program_arguments if isinstance(raw_program_arguments, list) else []
     return {
         "configured": bool(status.get("configured")),
         "status_launchd_label": status.get("launchd_label"),
@@ -201,6 +208,22 @@ def looks_loaded(launchctl: str) -> bool:
         "not found",
     )
     return not any(marker in lowered for marker in unloaded_markers)
+
+
+def validated_program_arguments(value: Any, name: str, reasons: list[str]) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        reasons.append(f"{name}: LaunchAgent ProgramArguments is not a list")
+        return []
+    if not all(isinstance(item, str) and item for item in value):
+        reasons.append(f"{name}: LaunchAgent ProgramArguments contains non-string or empty values")
+        return []
+    return value
+
+
+def is_absolute_path(value: Any) -> bool:
+    return isinstance(value, str) and Path(value).is_absolute()
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
