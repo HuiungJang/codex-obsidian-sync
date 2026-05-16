@@ -587,6 +587,7 @@ GitHub Release:
 - release workflow는 checksum 검증 후 `codex-obsidian-sync.rb` Homebrew formula를 생성하고 Ruby 문법 검사를 통과해야 한다
 - release workflow는 GitHub Release publish 후 생성된 formula로 Homebrew install/version/test/uninstall smoke를 통과해야 한다
 - release workflow는 Homebrew smoke 후 `scripts/audit_release_evidence.py`로 artifact, checksum, formula, smoke summary 전체를 다시 검증해야 한다
+- release workflow는 smoke summary 업로드 후 `scripts/audit_published_release.py`로 published GitHub Release asset 전체를 다시 내려받아 검증하고 audit summary를 release asset으로 남겨야 한다
 - downloaded `.tar.gz`는 같은 directory의 `.sha256`으로 `shasum -a 256 -c`가 통과해야 한다
 - installed binary는 `codex-obsidian-sync --version`으로 release version을 보고해야 한다
 - `python3 scripts/smoke_release_artifact.py --tarball <artifact>.tar.gz --checksum <artifact>.tar.gz.sha256 --expected-version <version>`이 통과해야 한다
