@@ -90,6 +90,9 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -103,6 +106,17 @@ jobs:
           for checksum in dist/*.sha256; do
             (cd dist && shasum -a 256 -c "$(basename "${checksum}")")
           done
+
+      - name: Generate Homebrew formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_homebrew_formula.py \
+            --version "${GITHUB_REF_NAME}" \
+            --aarch64-checksum dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256 \
+            --x86-64-checksum dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256 \
+            --output dist/codex-obsidian-sync.rb
+          ruby -c dist/codex-obsidian-sync.rb
 
       - name: Publish release
         env:
