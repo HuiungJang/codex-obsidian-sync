@@ -79,6 +79,7 @@ def read_checksum(path: Path, target: str) -> str:
     if path.is_symlink():
         raise ValueError(f"Checksum file is a symlink: {path}")
     expected_name = f"{FORMULA_NAME}-{target}.tar.gz"
+    matches: list[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         parts = line.strip().split()
         if not parts:
@@ -88,8 +89,12 @@ def read_checksum(path: Path, target: str) -> str:
             continue
         if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
             raise ValueError(f"Invalid SHA-256 checksum in {path}")
-        return checksum.lower()
-    raise ValueError(f"Checksum file {path} does not reference {expected_name}")
+        matches.append(checksum.lower())
+    if not matches:
+        raise ValueError(f"Checksum file {path} does not reference {expected_name}")
+    if len(matches) > 1:
+        raise ValueError(f"Checksum file {path} contains duplicate entries for {expected_name}")
+    return matches[0]
 
 
 def render_formula(*, version: str, repository: str, checksums: dict[str, str]) -> str:

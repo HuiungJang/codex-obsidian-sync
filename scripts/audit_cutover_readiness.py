@@ -247,6 +247,7 @@ def audit_release_target(release_dir: Path, target: str) -> dict[str, Any]:
 
 
 def read_checksum(path: Path, package_name: str) -> str:
+    matches: list[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         parts = line.strip().split()
         if not parts:
@@ -256,8 +257,12 @@ def read_checksum(path: Path, package_name: str) -> str:
             continue
         if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
             raise ValueError(f"invalid SHA-256 checksum in {path}")
-        return checksum.lower()
-    raise ValueError(f"checksum file does not reference {package_name}")
+        matches.append(checksum.lower())
+    if not matches:
+        raise ValueError(f"checksum file does not reference {package_name}")
+    if len(matches) > 1:
+        raise ValueError(f"checksum file contains duplicate entries for {package_name}")
+    return matches[0]
 
 
 def validate_tarball_shape(tarball: Path) -> None:
