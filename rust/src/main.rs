@@ -9,7 +9,7 @@ use codex_obsidian_sync_rs::service_state::load_service_state;
 use codex_obsidian_sync_rs::status_snapshot::{
     build_status_snapshot, query_launchd_loaded, render_status_snapshot,
 };
-use codex_obsidian_sync_rs::sync::sync_once_dry_run;
+use codex_obsidian_sync_rs::sync::{sync_once_dry_run, sync_once_write};
 use time::OffsetDateTime;
 
 fn main() {
@@ -65,7 +65,14 @@ fn run(cli: Cli) -> Result<(), SyncError> {
         Command::SyncOnce(args) => {
             let config_data = load_toml_config(cli.config.as_deref())?;
             let config = resolve_sync_config(&config_data, &SyncConfigOverrides::from(&args))?;
-            let summary = sync_once_dry_run(&config, args.dry_run_output.as_deref())?;
+            let summary = if args.write {
+                if args.dry_run_output.is_some() {
+                    return Err(SyncError::Config);
+                }
+                sync_once_write(&config)?
+            } else {
+                sync_once_dry_run(&config, args.dry_run_output.as_deref())?
+            };
             let content = serde_json::to_string_pretty(&summary).map_err(|_| SyncError::Render)?;
             println!("{content}");
             Ok(())

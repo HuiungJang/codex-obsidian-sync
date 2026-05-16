@@ -7,7 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use assert_cmd::prelude::*;
 use codex_obsidian_sync_rs::config::SyncConfig;
-use codex_obsidian_sync_rs::sync::{SyncRunOptions, sync_once_dry_run_with_options};
+use codex_obsidian_sync_rs::lock::ProcessLock;
+use codex_obsidian_sync_rs::sync::{
+    SyncRunOptions, sync_once_dry_run_with_options, sync_once_write_with_options,
+};
 use serde_json::{Value, json};
 use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, UtcOffset};
@@ -336,6 +339,286 @@ fn dry_run_fast_path_writes_runtime_state_only_to_temp_state() {
     assert!(second_output.join("sync-state.json").exists());
     assert!(!second_output.join("Codex").exists());
     assert_eq!(fs::read(&config.state_file).unwrap(), before_state);
+}
+
+#[test]
+fn write_mode_writes_notes_and_state_to_real_paths() {
+    let root = temp_dir("write-first");
+    let config = sync_config(&root, false);
+    let session_id = "019d23a7-9258-7810-93cc-c6833b348308";
+    let rollout = write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        session_id,
+        &[
+            session_meta(session_id, "2026-04-03T01:10:00Z", json!("vscode")),
+            message_record("2026-04-03T01:10:01Z", "user", None, "실제 쓰기 질문"),
+            message_record(
+                "2026-04-03T01:10:02Z",
+                "assistant",
+                Some("final_answer"),
+                "실제 쓰기 응답",
+            ),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[index_entry(
+            session_id,
+            "write mode",
+            "2026-04-03T01:10:02Z",
+        )],
+    );
+
+    let summary = sync_once_write_with_options(&config, run_options()).unwrap();
+
+    assert!(!summary.dry_run);
+    assert_eq!(summary.processed, 1);
+    assert_eq!(summary.rewritten, 1);
+    assert!(config.vault.join("Codex/Daily/2026-04-03.md").exists());
+    assert!(config.state_file.exists());
+    let conversation_text = fs::read_to_string(single_conversation_note(&config.vault)).unwrap();
+    assert!(conversation_text.contains("실제 쓰기 질문"));
+    let state = read_json(&config.state_file);
+    assert_eq!(
+        state["files"][rollout.to_string_lossy().as_ref()]["included"],
+        true
+    );
+}
+
+#[test]
+fn write_mode_appends_to_existing_real_note() {
+    let root = temp_dir("write-append");
+    let config = sync_config(&root, false);
+    let session_id = "019d23a7-9258-7810-93cc-c6833b348309";
+    let rollout = write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        session_id,
+        &[
+            session_meta(session_id, "2026-04-03T01:11:00Z", json!("vscode")),
+            message_record("2026-04-03T01:11:01Z", "user", None, "첫 실제 질문"),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[index_entry(
+            session_id,
+            "write append",
+            "2026-04-03T01:11:01Z",
+        )],
+    );
+    sync_once_write_with_options(&config, run_options()).unwrap();
+    append_jsonl(
+        &rollout,
+        &message_record("2026-04-03T01:11:02Z", "user", None, "두 번째 실제 질문"),
+    );
+
+    let summary = sync_once_write_with_options(&config, run_options()).unwrap();
+
+    assert_eq!(summary.processed, 1);
+    assert_eq!(summary.appended, 1);
+    assert_eq!(summary.rewritten, 0);
+    let conversation_text = fs::read_to_string(single_conversation_note(&config.vault)).unwrap();
+    assert!(conversation_text.contains("첫 실제 질문"));
+    assert!(conversation_text.contains("두 번째 실제 질문"));
+}
+
+#[test]
+fn write_mode_falls_back_to_full_rebuild_when_incremental_offset_is_stale() {
+    let root = temp_dir("write-stale-offset");
+    let config = sync_config(&root, false);
+    let session_id = "019d23a7-9258-7810-93cc-c6833b348310";
+    let rollout = write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        session_id,
+        &[
+            session_meta(session_id, "2026-04-03T01:12:00Z", json!("vscode")),
+            message_record("2026-04-03T01:12:01Z", "user", None, "첫 실제 질문"),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[index_entry(
+            session_id,
+            "write stale offset",
+            "2026-04-03T01:12:01Z",
+        )],
+    );
+    sync_once_write_with_options(&config, run_options()).unwrap();
+    append_jsonl(
+        &rollout,
+        &message_record(
+            "2026-04-03T01:12:02Z",
+            "assistant",
+            Some("final_answer"),
+            "offset 복구 실제 응답",
+        ),
+    );
+    bump_state_offset(&config.state_file, &rollout);
+
+    let summary = sync_once_write_with_options(&config, run_options()).unwrap();
+
+    assert_eq!(summary.processed, 1);
+    assert_eq!(summary.skipped_invalid, 0);
+    assert_eq!(summary.appended, 1);
+    assert_eq!(summary.rewritten, 1);
+    let conversation_text = fs::read_to_string(single_conversation_note(&config.vault)).unwrap();
+    assert!(conversation_text.contains("offset 복구 실제 응답"));
+}
+
+#[test]
+fn write_mode_quarantines_corrupt_state_before_writing_new_state() {
+    let root = temp_dir("write-corrupt-state");
+    let config = sync_config(&root, false);
+    let session_id = "019d23a7-9258-7810-93cc-c6833b348311";
+    write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        session_id,
+        &[
+            session_meta(session_id, "2026-04-03T01:12:00Z", json!("vscode")),
+            message_record("2026-04-03T01:12:01Z", "user", None, "state 복구"),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[index_entry(
+            session_id,
+            "corrupt state",
+            "2026-04-03T01:12:01Z",
+        )],
+    );
+    fs::write(&config.state_file, "{").unwrap();
+
+    sync_once_write_with_options(&config, run_options()).unwrap();
+
+    assert!(config.state_file.exists());
+    assert!(read_json(&config.state_file)["files"].is_object());
+    let quarantined = fs::read_dir(config.state_file.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("sync-state.json.corrupt-")
+        });
+    assert!(quarantined);
+}
+
+#[test]
+fn cli_write_rejects_dry_run_output() {
+    let root = temp_dir("write-dry-run-output");
+    let config = sync_config(&root, false);
+
+    Command::cargo_bin(BIN)
+        .unwrap()
+        .args([
+            "sync-once",
+            "--write",
+            "--vault",
+            config.vault.to_str().unwrap(),
+            "--codex-home",
+            config.codex_home.to_str().unwrap(),
+            "--state-file",
+            config.state_file.to_str().unwrap(),
+            "--lock-file",
+            config.lock_file.to_str().unwrap(),
+            "--dry-run-output",
+            root.join("output").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("config error"));
+}
+
+#[test]
+fn cli_write_outputs_python_shaped_summary() {
+    let root = temp_dir("write-summary-shape");
+    let config = sync_config(&root, false);
+    let session_id = "019d23a7-9258-7810-93cc-c6833b348312";
+    write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        session_id,
+        &[
+            session_meta(session_id, "2026-04-03T01:13:00Z", json!("vscode")),
+            message_record("2026-04-03T01:13:01Z", "user", None, "summary shape"),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[index_entry(
+            session_id,
+            "summary shape",
+            "2026-04-03T01:13:01Z",
+        )],
+    );
+
+    let assert = Command::cargo_bin(BIN)
+        .unwrap()
+        .args([
+            "sync-once",
+            "--write",
+            "--vault",
+            config.vault.to_str().unwrap(),
+            "--codex-home",
+            config.codex_home.to_str().unwrap(),
+            "--state-file",
+            config.state_file.to_str().unwrap(),
+            "--lock-file",
+            config.lock_file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let summary: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(summary["processed"], 1);
+    assert!(summary.get("dry_run").is_none());
+    assert!(summary.get("output_dir").is_none());
+    assert!(summary.get("temp_state_file").is_none());
+    assert!(summary.get("planned_writes").is_none());
+    assert!(summary.get("lock_exists").is_none());
+}
+
+#[test]
+fn cli_write_reports_lock_contention() {
+    let root = temp_dir("write-lock-contention");
+    let config = sync_config(&root, false);
+    let _lock = ProcessLock::try_acquire(&config.lock_file).unwrap();
+
+    Command::cargo_bin(BIN)
+        .unwrap()
+        .args([
+            "sync-once",
+            "--write",
+            "--vault",
+            config.vault.to_str().unwrap(),
+            "--codex-home",
+            config.codex_home.to_str().unwrap(),
+            "--state-file",
+            config.state_file.to_str().unwrap(),
+            "--lock-file",
+            config.lock_file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "Another codex-obsidian-sync process is already running",
+        ));
 }
 
 #[test]

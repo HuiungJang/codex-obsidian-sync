@@ -4,6 +4,7 @@ pub mod discovery;
 pub mod dry_run_output;
 pub mod error;
 pub mod inspect;
+pub mod lock;
 pub mod models;
 pub mod parser;
 pub mod redaction;

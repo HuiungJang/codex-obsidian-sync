@@ -15,6 +15,7 @@ use crate::discovery::{
 };
 use crate::dry_run_output::DryRunOutput;
 use crate::error::SyncError;
+use crate::lock::ProcessLock;
 use crate::models::{SessionEnvelope, TranscriptMessage};
 use crate::parser::load_rollout_records_from_offset;
 use crate::render::{
@@ -24,8 +25,11 @@ use crate::render::{
     render_project_managed_section, render_project_note_header, render_transcript_append_text,
 };
 use crate::state_store::{
-    FileFingerprint, StateEntry, SyncState, file_fingerprint, load_state_read_only,
-    render_temp_state,
+    FileFingerprint, StateEntry, SyncState, file_fingerprint, load_state_for_write,
+    load_state_read_only, render_temp_state,
+};
+use crate::writer::{
+    RealWriter, validate_vault_root as validate_real_vault_root, write_state_file,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -61,10 +65,15 @@ pub struct SyncSummary {
     pub paused: usize,
     pub fast_path: usize,
     pub duration_ms: u64,
+    #[serde(skip_serializing_if = "is_false")]
     pub dry_run: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub output_dir: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub temp_state_file: String,
+    #[serde(skip_serializing_if = "is_zero")]
     pub planned_writes: usize,
+    #[serde(skip_serializing_if = "is_false")]
     pub lock_exists: bool,
 }
 
@@ -90,6 +99,88 @@ impl SyncSummary {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+trait SyncTarget {
+    fn read_relative(&self, relative_path: &str) -> Result<Option<String>, SyncError>;
+    fn exists_relative(&self, relative_path: &str) -> Result<bool, SyncError>;
+    fn fingerprint_relative(
+        &self,
+        relative_path: &str,
+    ) -> Result<Option<FileFingerprint>, SyncError>;
+    fn write_relative(&self, relative_path: &str, content: &str) -> Result<PathBuf, SyncError>;
+    fn write_state(&self, state: &SyncState) -> Result<(), SyncError>;
+}
+
+struct DryRunTarget<'a> {
+    dry_run: &'a DryRunOutput,
+}
+
+impl SyncTarget for DryRunTarget<'_> {
+    fn read_relative(&self, relative_path: &str) -> Result<Option<String>, SyncError> {
+        self.dry_run.read_relative(relative_path)
+    }
+
+    fn exists_relative(&self, relative_path: &str) -> Result<bool, SyncError> {
+        self.dry_run.exists_relative(relative_path)
+    }
+
+    fn fingerprint_relative(
+        &self,
+        relative_path: &str,
+    ) -> Result<Option<FileFingerprint>, SyncError> {
+        self.dry_run.fingerprint_relative(relative_path)
+    }
+
+    fn write_relative(&self, relative_path: &str, content: &str) -> Result<PathBuf, SyncError> {
+        self.dry_run.write_relative(relative_path, content)
+    }
+
+    fn write_state(&self, state: &SyncState) -> Result<(), SyncError> {
+        let content = render_temp_state(state)?;
+        self.dry_run.write_relative("sync-state.json", &content)?;
+        Ok(())
+    }
+}
+
+struct RealWriteTarget<'a> {
+    writer: &'a RealWriter,
+    state_file: &'a Path,
+}
+
+impl SyncTarget for RealWriteTarget<'_> {
+    fn read_relative(&self, relative_path: &str) -> Result<Option<String>, SyncError> {
+        self.writer.read_relative(relative_path)
+    }
+
+    fn exists_relative(&self, relative_path: &str) -> Result<bool, SyncError> {
+        self.writer.exists_relative(relative_path)
+    }
+
+    fn fingerprint_relative(
+        &self,
+        relative_path: &str,
+    ) -> Result<Option<FileFingerprint>, SyncError> {
+        self.writer.fingerprint_relative(relative_path)
+    }
+
+    fn write_relative(&self, relative_path: &str, content: &str) -> Result<PathBuf, SyncError> {
+        self.writer.write_managed_file(relative_path, content)
+    }
+
+    fn write_state(&self, state: &SyncState) -> Result<(), SyncError> {
+        let content = render_temp_state(state)?;
+        write_state_file(self.state_file, &content)?;
+        Ok(())
+    }
+}
+
 pub fn sync_once_dry_run(
     config: &SyncConfig,
     requested_output: Option<&Path>,
@@ -106,30 +197,81 @@ pub fn sync_once_dry_run_with_options(
     let mut summary = SyncSummary::new(config.lock_file.exists());
     let vault_root = validate_vault_root(&config.vault)?;
     let dry_run = DryRunOutput::prepare(config, requested_output)?;
+    let target = DryRunTarget { dry_run: &dry_run };
     summary.output_dir = dry_run.root().to_string_lossy().into_owned();
     summary.temp_state_file = dry_run.temp_state_file().to_string_lossy().into_owned();
 
+    let state = load_state_read_only(&config.state_file)?;
+    run_sync(
+        config,
+        &target,
+        state,
+        &vault_root,
+        started,
+        summary,
+        options,
+    )
+}
+
+pub fn sync_once_write(config: &SyncConfig) -> Result<SyncSummary, SyncError> {
+    sync_once_write_with_options(config, SyncRunOptions::new())
+}
+
+pub fn sync_once_write_with_options(
+    config: &SyncConfig,
+    options: SyncRunOptions,
+) -> Result<SyncSummary, SyncError> {
+    let started = Instant::now();
+    let mut summary = SyncSummary::new(config.lock_file.exists());
+    summary.dry_run = false;
+    let _lock = ProcessLock::try_acquire(&config.lock_file)?;
+    let vault_root = validate_real_vault_root(&config.vault)?;
+    let writer = RealWriter::prepare(&vault_root)?;
+    let target = RealWriteTarget {
+        writer: &writer,
+        state_file: &config.state_file,
+    };
+    let state = load_state_for_write(&config.state_file)?;
+    run_sync(
+        config,
+        &target,
+        state,
+        &vault_root,
+        started,
+        summary,
+        options,
+    )
+}
+
+fn run_sync(
+    config: &SyncConfig,
+    target: &dyn SyncTarget,
+    mut state: SyncState,
+    vault_root: &Path,
+    started: Instant,
+    mut summary: SyncSummary,
+    options: SyncRunOptions,
+) -> Result<SyncSummary, SyncError> {
     let session_index_path = config.codex_home.join("session_index.jsonl");
-    let mut state = load_state_read_only(&config.state_file)?;
     prune_missing_rollouts(&mut state);
     let previous_conversations = included_conversations(&state);
 
     if can_fast_skip_sync(
         &state,
         &session_index_path,
-        &vault_root,
+        vault_root,
         config.include_subagents,
     ) {
         update_runtime_state(&mut state, &session_index_path, None, options.now_utc)?;
         summary.fast_path = 1;
         summary.unchanged = state.files.len();
-        write_temp_state(&dry_run, &state, &mut summary)?;
-        summary.duration_ms = elapsed_ms(started);
-        return Ok(summary);
+        target.write_state(&state)?;
+        summary.planned_writes += 1;
+        return Ok(finalize_summary(summary, started));
     }
 
     let session_index = load_session_index(&session_index_path)?;
-    let mut discovery_options = DiscoveryOptions::new(&vault_root);
+    let mut discovery_options = DiscoveryOptions::new(vault_root);
     discovery_options.include_subagents = config.include_subagents;
     discovery_options.recent_days = i64::from(config.recent_days);
     discovery_options.max_files = config.candidate_file_limit as usize;
@@ -151,7 +293,7 @@ pub fn sync_once_dry_run_with_options(
     let process_context = ProcessContext {
         session_index: &session_index,
         config,
-        dry_run: &dry_run,
+        target,
         render_options: &render_options,
         now_utc: options.now_utc,
     };
@@ -160,10 +302,10 @@ pub fn sync_once_dry_run_with_options(
     }
 
     let active_conversations = included_conversations(&state);
-    write_daily_notes(&dry_run, &active_conversations, &mut summary)?;
-    write_project_notes(&dry_run, &active_conversations, &mut summary)?;
+    write_daily_notes(target, &active_conversations, &mut summary)?;
+    write_project_notes(target, &active_conversations, &mut summary)?;
     clear_stale_index_notes(
-        &dry_run,
+        target,
         &previous_conversations,
         &active_conversations,
         &mut summary,
@@ -174,15 +316,24 @@ pub fn sync_once_dry_run_with_options(
         Some(!discovery.hit_file_cap && !discovery.hit_byte_cap),
         options.now_utc,
     )?;
-    write_temp_state(&dry_run, &state, &mut summary)?;
+    target.write_state(&state)?;
+    summary.planned_writes += 1;
+    Ok(finalize_summary(summary, started))
+}
+
+fn finalize_summary(mut summary: SyncSummary, started: Instant) -> SyncSummary {
     summary.duration_ms = elapsed_ms(started);
-    Ok(summary)
+    if !summary.dry_run {
+        summary.planned_writes = 0;
+        summary.lock_exists = false;
+    }
+    summary
 }
 
 struct ProcessContext<'a> {
     session_index: &'a SessionIndex,
     config: &'a SyncConfig,
-    dry_run: &'a DryRunOutput,
+    target: &'a dyn SyncTarget,
     render_options: &'a RenderOptions,
     now_utc: OffsetDateTime,
 }
@@ -220,7 +371,7 @@ fn process_rollout(
     let conversation =
         build_conversation_note_record_with_options(&envelope, context.render_options)?;
     let note_relative = conversation.conversation_note_path.as_str();
-    let note_exists = context.dry_run.exists_relative(note_relative)?;
+    let note_exists = context.target.exists_relative(note_relative)?;
     let header = render_conversation_header(&envelope, &conversation);
     let header_hash = build_content_hash(&header);
     let render_hash = build_render_hash(&envelope);
@@ -236,7 +387,7 @@ fn process_rollout(
 
     let mut wrote_note = false;
     let previous_note_matches = note_exists
-        && note_fingerprint_matches(context.dry_run, note_relative, previous_note_fingerprint)?;
+        && note_fingerprint_matches(context.target, note_relative, previous_note_fingerprint)?;
     if note_exists && previous_render_hash == Some(render_hash.as_str()) && previous_note_matches {
         summary.unchanged += 1;
     } else {
@@ -246,9 +397,9 @@ fn process_rollout(
 
         if previous_note_matches && header_changed {
             if let Some(content) =
-                rewrite_conversation_header_content(context.dry_run, note_relative, &header)?
+                rewrite_conversation_header_content(context.target, note_relative, &header)?
             {
-                write_relative(context.dry_run, note_relative, &content, summary)?;
+                write_relative(context.target, note_relative, &content, summary)?;
                 wrote_note = true;
                 summary.rewritten += 1;
             }
@@ -259,11 +410,11 @@ fn process_rollout(
                 render_transcript_append_text(&envelope.messages[start_index..])
             {
                 let existing = context
-                    .dry_run
+                    .target
                     .read_relative(note_relative)?
-                    .ok_or(SyncError::DryRunOutput)?;
+                    .ok_or(SyncError::Write)?;
                 let content = format!("{existing}{append_text}");
-                write_relative(context.dry_run, note_relative, &content, summary)?;
+                write_relative(context.target, note_relative, &content, summary)?;
                 wrote_note = true;
                 summary.appended += 1;
             }
@@ -271,7 +422,7 @@ fn process_rollout(
 
         if !wrote_note {
             let content = render_conversation_note(&envelope, &conversation);
-            write_relative(context.dry_run, note_relative, &content, summary)?;
+            write_relative(context.target, note_relative, &content, summary)?;
             wrote_note = true;
             summary.rewritten += 1;
         }
@@ -287,7 +438,7 @@ fn process_rollout(
             render_hash: &render_hash,
             header_hash: &header_hash,
             note_fingerprint: context
-                .dry_run
+                .target
                 .fingerprint_relative(note_relative)?
                 .filter(|_| note_exists || wrote_note),
             previous_entry: previous_entry.as_ref(),
@@ -363,11 +514,11 @@ fn append_start_index(
 }
 
 fn rewrite_conversation_header_content(
-    dry_run: &DryRunOutput,
+    target: &dyn SyncTarget,
     note_relative: &str,
     header: &str,
 ) -> Result<Option<String>, SyncError> {
-    let Some(existing) = dry_run.read_relative(note_relative)? else {
+    let Some(existing) = target.read_relative(note_relative)? else {
         return Ok(None);
     };
     let Some(transcript_body) = extract_transcript_body(&existing) else {
@@ -379,14 +530,14 @@ fn rewrite_conversation_header_content(
 }
 
 fn note_fingerprint_matches(
-    dry_run: &DryRunOutput,
+    target: &dyn SyncTarget,
     note_relative: &str,
     expected: Option<&FileFingerprint>,
 ) -> Result<bool, SyncError> {
     let Some(expected) = expected else {
         return Ok(false);
     };
-    Ok(dry_run.fingerprint_relative(note_relative)?.as_ref() == Some(expected))
+    Ok(target.fingerprint_relative(note_relative)?.as_ref() == Some(expected))
 }
 
 struct IncludedConversationUpdate<'a> {
@@ -583,7 +734,7 @@ fn string_extra(entry: &StateEntry, key: &str) -> Option<String> {
 }
 
 fn write_daily_notes(
-    dry_run: &DryRunOutput,
+    target: &dyn SyncTarget,
     conversations: &[ConversationNoteRecord],
     summary: &mut SyncSummary,
 ) -> Result<(), SyncError> {
@@ -618,7 +769,7 @@ fn write_daily_notes(
         });
         let managed_content = render_daily_managed_section(items);
         write_sectioned_note(
-            dry_run,
+            target,
             &format!("Codex/Daily/{date_key}.md"),
             &render_daily_note_header(date_key),
             &managed_content,
@@ -629,7 +780,7 @@ fn write_daily_notes(
 }
 
 fn write_project_notes(
-    dry_run: &DryRunOutput,
+    target: &dyn SyncTarget,
     conversations: &[ConversationNoteRecord],
     summary: &mut SyncSummary,
 ) -> Result<(), SyncError> {
@@ -654,7 +805,7 @@ fn write_project_notes(
         };
         let managed_content = render_project_managed_section(items);
         write_sectioned_note(
-            dry_run,
+            target,
             &format!("Codex/Projects/{project_slug}.md"),
             &header,
             &managed_content,
@@ -665,7 +816,7 @@ fn write_project_notes(
 }
 
 fn clear_stale_index_notes(
-    dry_run: &DryRunOutput,
+    target: &dyn SyncTarget,
     previous_conversations: &[ConversationNoteRecord],
     active_conversations: &[ConversationNoteRecord],
     summary: &mut SyncSummary,
@@ -674,7 +825,7 @@ fn clear_stale_index_notes(
     let (active_daily, active_projects) = index_note_paths(active_conversations);
 
     for daily_path in previous_daily.difference(&active_daily) {
-        if !dry_run.exists_relative(daily_path)? {
+        if !target.exists_relative(daily_path)? {
             continue;
         }
         let date_key = Path::new(daily_path)
@@ -682,7 +833,7 @@ fn clear_stale_index_notes(
             .and_then(|stem| stem.to_str())
             .ok_or(SyncError::Render)?;
         write_sectioned_note(
-            dry_run,
+            target,
             daily_path,
             &render_daily_note_header(date_key),
             "",
@@ -691,7 +842,7 @@ fn clear_stale_index_notes(
     }
 
     for project_path in previous_projects.difference(&active_projects) {
-        if !dry_run.exists_relative(project_path)? {
+        if !target.exists_relative(project_path)? {
             continue;
         }
         let project_slug = Path::new(project_path)
@@ -699,7 +850,7 @@ fn clear_stale_index_notes(
             .and_then(|stem| stem.to_str())
             .ok_or(SyncError::Render)?;
         write_sectioned_note(
-            dry_run,
+            target,
             project_path,
             &format!("# {project_slug}"),
             "",
@@ -736,43 +887,32 @@ fn index_note_paths(
 }
 
 fn write_sectioned_note(
-    dry_run: &DryRunOutput,
+    target: &dyn SyncTarget,
     relative_path: &str,
     header: &str,
     managed_content: &str,
     summary: &mut SyncSummary,
 ) -> Result<(), SyncError> {
-    let existing = dry_run.read_relative(relative_path)?.unwrap_or_default();
+    let existing = target.read_relative(relative_path)?.unwrap_or_default();
     let base = if existing.is_empty() {
         format!("{header}\n")
     } else {
         existing
     };
     let merged = merge_managed_section(&base, managed_content);
-    write_relative(dry_run, relative_path, &merged, summary)?;
+    write_relative(target, relative_path, &merged, summary)?;
     Ok(())
 }
 
 fn write_relative(
-    dry_run: &DryRunOutput,
+    target: &dyn SyncTarget,
     relative_path: &str,
     content: &str,
     summary: &mut SyncSummary,
 ) -> Result<PathBuf, SyncError> {
-    let path = dry_run.write_relative(relative_path, content)?;
+    let path = target.write_relative(relative_path, content)?;
     summary.planned_writes += 1;
     Ok(path)
-}
-
-fn write_temp_state(
-    dry_run: &DryRunOutput,
-    state: &SyncState,
-    summary: &mut SyncSummary,
-) -> Result<(), SyncError> {
-    let content = render_temp_state(state)?;
-    dry_run.write_relative("sync-state.json", &content)?;
-    summary.planned_writes += 1;
-    Ok(())
 }
 
 fn can_fast_skip_sync(

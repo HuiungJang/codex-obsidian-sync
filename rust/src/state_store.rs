@@ -9,6 +9,7 @@ use std::os::unix::fs::MetadataExt;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::error::SyncError;
 
@@ -77,9 +78,56 @@ pub fn load_state_read_only(path: &Path) -> Result<SyncState, SyncError> {
     Ok(state)
 }
 
+pub fn load_state_for_write(path: &Path) -> Result<SyncState, SyncError> {
+    match load_state_read_only(path) {
+        Ok(state) => Ok(state),
+        Err(SyncError::Parse) => {
+            quarantine_corrupt_state(path)?;
+            Ok(SyncState::default())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub fn render_temp_state(state: &SyncState) -> Result<String, SyncError> {
     let content = serde_json::to_string_pretty(state).map_err(|_| SyncError::Render)?;
     Ok(format!("{content}\n"))
+}
+
+fn quarantine_corrupt_state(path: &Path) -> Result<(), SyncError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let timestamp = compact_utc_timestamp(OffsetDateTime::now_utc());
+    let state_file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(SyncError::Parse)?;
+    for suffix in 0..1000 {
+        let candidate_name = if suffix == 0 {
+            format!("{state_file_name}.corrupt-{timestamp}")
+        } else {
+            format!("{state_file_name}.corrupt-{timestamp}-{suffix}")
+        };
+        let candidate = path.with_file_name(candidate_name);
+        if !candidate.exists() {
+            fs::rename(path, candidate).map_err(|_| SyncError::Parse)?;
+            return Ok(());
+        }
+    }
+    Err(SyncError::Parse)
+}
+
+fn compact_utc_timestamp(value: OffsetDateTime) -> String {
+    format!(
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        value.year(),
+        u8::from(value.month()),
+        value.day(),
+        value.hour(),
+        value.minute(),
+        value.second()
+    )
 }
 
 #[cfg(unix)]

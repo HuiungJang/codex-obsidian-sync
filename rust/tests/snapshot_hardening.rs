@@ -35,7 +35,6 @@ fn sync_summary_and_rendered_note_snapshots_are_redacted_and_inputs_unchanged() 
   "dry_run": true,
   "duration_ms": "[duration-ms]",
   "fast_path": 0,
-  "lock_exists": false,
   "output_dir": "[output-dir]",
   "paused": 0,
   "planned_writes": 4,

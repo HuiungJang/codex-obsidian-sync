@@ -148,7 +148,10 @@ pub fn write_state_file(path: &Path, content: &str) -> Result<(), SyncError> {
         return Err(SyncError::Write);
     }
     let parent = path.parent().ok_or(SyncError::Write)?;
-    create_absolute_dirs_without_symlinks(parent)?;
+    if fs::symlink_metadata(parent).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(SyncError::Write);
+    }
+    create_private_dir_all(parent).map_err(|_| SyncError::Write)?;
     reject_target_symlink(path)?;
     write_atomic(path, content)
 }
@@ -253,32 +256,20 @@ fn nearest_existing_ancestor(path: &Path) -> Result<&Path, SyncError> {
     Ok(current)
 }
 
-fn create_absolute_dirs_without_symlinks(path: &Path) -> Result<(), SyncError> {
-    if !path.is_absolute() {
-        return Err(SyncError::Write);
+fn create_private_dir_all(path: &Path) -> io::Result<()> {
+    if path.exists() {
+        return Ok(());
     }
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::RootDir => current.push(component.as_os_str()),
-            Component::Normal(name) => {
-                current.push(name);
-                match fs::symlink_metadata(&current) {
-                    Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                        return Err(SyncError::Write);
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        create_private_dir(&current).map_err(|_| SyncError::Write)?;
-                    }
-                    Err(_) => return Err(SyncError::Write),
-                }
-            }
-            Component::CurDir => {}
-            Component::ParentDir | Component::Prefix(_) => return Err(SyncError::Write),
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        create_private_dir_all(parent)?;
     }
-    Ok(())
+    match create_private_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(unix)]

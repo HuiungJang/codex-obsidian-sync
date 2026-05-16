@@ -20,6 +20,12 @@ pub enum SyncError {
     #[error("write error")]
     Write,
 
+    #[error("Another codex-obsidian-sync process is already running")]
+    LockContention,
+
+    #[error("lock error")]
+    Lock,
+
     #[error("unsupported command")]
     UnsupportedCommand,
 }
