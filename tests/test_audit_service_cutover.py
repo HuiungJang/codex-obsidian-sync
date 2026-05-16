@@ -399,6 +399,40 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("pre: status plist_path is not absolute", report["no_go_reasons"])
 
+    def test_fails_when_last_success_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            status = json.loads(files["pre_status"].read_text(encoding="utf-8"))
+            status["last_success"] = "never run"
+            files["pre_status"].write_text(json.dumps(status) + "\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("pre: last_success is missing or invalid", report["no_go_reasons"])
+
+    def test_fails_when_post_last_success_regresses(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            status = json.loads(files["post_status"].read_text(encoding="utf-8"))
+            status["last_success"] = "2026-05-15T23:55:00+00:00"
+            files["post_status"].write_text(json.dumps(status) + "\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: last_success regressed from stopped snapshot", report["no_go_reasons"])
+
     def test_fails_with_report_when_status_json_is_invalid(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)

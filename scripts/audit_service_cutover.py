@@ -131,6 +131,7 @@ def audit_service_cutover(
     if pre_config_path and post_config_path and pre_config_path != post_config_path:
         no_go_reasons.append("pre and post LaunchAgent --config paths differ")
     no_go_reasons.extend(validate_status_plist_paths(pre_status, stopped_status, post_status))
+    no_go_reasons.extend(validate_last_success_progression(pre_status, stopped_status, post_status))
     if expected_python_program_arg0 == expected_rust_program_arg0:
         no_go_reasons.append("expected Python and Rust binaries must differ")
     if not is_absolute_path(expected_python_program_arg0):
@@ -266,6 +267,44 @@ def validate_status_plist_paths(
     if len(valid_paths) == len(paths) and len(set(valid_paths.values())) != 1:
         reasons.append("pre, stopped, and post status plist_path values differ")
     return reasons
+
+
+def validate_last_success_progression(
+    pre_status: dict[str, Any],
+    stopped_status: dict[str, Any],
+    post_status: dict[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    snapshots = {
+        "pre": parse_iso_datetime(pre_status.get("last_success")),
+        "stopped": parse_iso_datetime(stopped_status.get("last_success")),
+        "post": parse_iso_datetime(post_status.get("last_success")),
+    }
+    for name, value in snapshots.items():
+        if value is None:
+            reasons.append(f"{name}: last_success is missing or invalid")
+    if all(value is not None for value in snapshots.values()):
+        pre_success = snapshots["pre"]
+        stopped_success = snapshots["stopped"]
+        post_success = snapshots["post"]
+        if stopped_success < pre_success:
+            reasons.append("stopped: last_success regressed from pre snapshot")
+        if post_success < stopped_success:
+            reasons.append("post: last_success regressed from stopped snapshot")
+    return reasons
+
+
+def parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: str) -> dict[str, Any]:
