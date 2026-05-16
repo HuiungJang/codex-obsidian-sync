@@ -355,7 +355,23 @@ def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, ta
     else:
         if any(check.get("no_go_reasons") != [] for check in checks):
             reasons.append("uploaded release evidence summary contains check no-go reasons")
-        uploaded_names = {check.get("name") for check in checks if isinstance(check.get("name"), str)}
+        uploaded_name_counts: dict[str, int] = {}
+        malformed_names: list[str] = []
+        for index, check in enumerate(checks):
+            name = check.get("name")
+            if not isinstance(name, str) or not name.strip():
+                malformed_names.append(f"#{index}")
+                continue
+            uploaded_name_counts[name] = uploaded_name_counts.get(name, 0) + 1
+        if malformed_names:
+            reasons.append(f"uploaded release evidence summary contains malformed check names: {malformed_names}")
+        uploaded_names = set(uploaded_name_counts)
+        duplicate_names = sorted(name for name, count in uploaded_name_counts.items() if count > 1)
+        if duplicate_names:
+            reasons.append(f"uploaded release evidence summary contains duplicate checks: {duplicate_names}")
+        unexpected_names = sorted(name for name in uploaded_names if name not in required_evidence_check_names())
+        if unexpected_names:
+            reasons.append(f"uploaded release evidence summary contains unexpected checks: {unexpected_names}")
         missing_names = [name for name in required_evidence_check_names() if name not in uploaded_names]
         if missing_names:
             reasons.append(f"uploaded release evidence summary is missing checks: {missing_names}")
