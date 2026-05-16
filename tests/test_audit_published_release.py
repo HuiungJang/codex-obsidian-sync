@@ -173,6 +173,31 @@ class AuditPublishedReleaseTests(unittest.TestCase):
             result["no_go_reasons"],
         )
 
+    def test_fails_when_uploaded_evidence_summary_version_does_not_match(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "assets"
+            download_dir = root / "downloaded"
+            assets = write_release_asset_set(source_dir)
+            summary = json.loads(assets["release-evidence-summary.json"].decode("utf-8"))
+            summary["version"] = "0.2.0"
+            assets["release-evidence-summary.json"] = json.dumps(summary).encode("utf-8")
+            opener = FakeGitHubOpener(assets)
+
+            result = audit_published_release.audit_published_release(
+                version="0.1.0",
+                repository=REPOSITORY,
+                download_dir=download_dir,
+                github_api_url=API_URL,
+                opener=opener,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "uploaded release evidence summary version does not match requested version",
+            result["no_go_reasons"],
+        )
+
     def test_fails_when_uploaded_evidence_summary_omits_checks(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-published-release-") as temp_dir:
             root = Path(temp_dir)

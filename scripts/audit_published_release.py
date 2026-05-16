@@ -129,7 +129,7 @@ def audit_published_release(
         no_go_reasons.extend(f"local release evidence: {reason}" for reason in local_evidence_audit["no_go_reasons"])
 
         uploaded_evidence_summary = read_uploaded_evidence_summary(destination / RELEASE_EVIDENCE_SUMMARY)
-        no_go_reasons.extend(validate_uploaded_evidence_summary(uploaded_evidence_summary, tag, repository))
+        no_go_reasons.extend(validate_uploaded_evidence_summary(uploaded_evidence_summary, version, tag, repository))
     except Exception as error:
         no_go_reasons.append(str(error))
 
@@ -315,10 +315,12 @@ def read_uploaded_evidence_summary(path: Path) -> dict[str, Any]:
     return value
 
 
-def validate_uploaded_evidence_summary(summary: dict[str, Any], tag: str, repository: str) -> list[str]:
+def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, tag: str, repository: str) -> list[str]:
     reasons: list[str] = []
     if summary.get("ok") is not True:
         reasons.append("uploaded release evidence summary ok is not true")
+    if summary.get("version") != version:
+        reasons.append("uploaded release evidence summary version does not match requested version")
     if summary.get("tag") != tag:
         reasons.append("uploaded release evidence summary tag does not match requested tag")
     if summary.get("repository") != repository:
