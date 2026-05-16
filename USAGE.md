@@ -226,6 +226,22 @@ codex-obsidian-sync status --json
 
 ## Cutover Monitoring
 
+컷오버 직전에는 readiness audit을 먼저 실행한다. 이 명령은 release artifact, Homebrew formula,
+설치될 Rust binary, Python rollback binary, 현재 LaunchAgent 상태, monitor directory 조건을
+읽기 전용으로 점검하고 `ok=false`이면 컷오버하지 않는다.
+
+```bash
+python3 scripts/audit_cutover_readiness.py \
+  --version <tag> \
+  --release-dir dist \
+  --homebrew-formula <tap>/Formula/codex-obsidian-sync.rb \
+  --expected-rust-binary "$(command -v codex-obsidian-sync)" \
+  --rollback-binary "$HOME/.local/bin/codex-obsidian-sync"
+```
+
+pre-cutover LaunchAgent binary까지 고정해서 확인하려면 현재 plist의 실제 `ProgramArguments[0]`를
+`--expected-current-program-arg0`에 넘긴다.
+
 Rust LaunchAgent cutover 직후에는 아래 checkpoint를 기록한다.
 
 ```bash
