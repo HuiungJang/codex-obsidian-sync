@@ -226,9 +226,10 @@ codex-obsidian-sync status --json
 
 ## Cutover Monitoring
 
-컷오버 직전에는 readiness audit을 먼저 실행한다. 이 명령은 release artifact, Homebrew formula,
-설치될 Rust binary, Python rollback binary, 현재 LaunchAgent 상태, monitor directory 조건을
-읽기 전용으로 점검하고 `ok=false`이면 컷오버하지 않는다.
+컷오버 직전에는 readiness audit을 먼저 실행한다. 이 명령은 release artifact, checksum,
+target별 release smoke summary, Homebrew formula와 smoke summary, 설치될 Rust binary,
+Python rollback binary, 현재 LaunchAgent 상태, monitor directory 조건을 읽기 전용으로
+점검하고 `ok=false`이면 컷오버하지 않는다.
 
 ```bash
 python3 scripts/audit_cutover_readiness.py \
