@@ -33,5 +33,6 @@ uzers = "0.12"
 
 [dev-dependencies]
 assert_cmd = "2.2"
+insta = { version = "1.44", features = ["filters", "json", "redactions"] }
 insta-cmd = "0.6"
 predicates = "3.1"

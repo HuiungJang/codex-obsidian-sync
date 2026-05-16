@@ -14,6 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from fixture_redaction import find_first_leak, is_binary
+
 SESSION_VALID = "019f5f16-0000-7000-8000-000000000101"
 SESSION_INVALID = "019f5f16-0000-7000-8000-000000000102"
 SESSION_SUBAGENT = "019f5f16-0000-7000-8000-000000000103"
@@ -25,6 +27,7 @@ VOLATILE = "<volatile>"
 PYTHON_ONLY_CORRUPT_STATE = "python-quarantines-corrupt-state-rust-fails-read-only"
 OUTPUT_MARKER = ".codex-obsidian-sync-compare"
 OUTPUT_MARKER_CONTENT = "managed by compare_python_rust_sync.py\n"
+ANON_FIXTURE_ENV = "CODEX_OBSIDIAN_SYNC_ANON_FIXTURE"
 
 
 def main() -> int:
@@ -39,6 +42,12 @@ def main() -> int:
         "--rust-bin",
         type=Path,
         help="Path to codex-obsidian-sync-rs. Defaults to building rust/ target.",
+    )
+    parser.add_argument(
+        "--local-fixture",
+        type=Path,
+        default=Path(os.environ[ANON_FIXTURE_ENV]) if os.environ.get(ANON_FIXTURE_ENV) else None,
+        help=f"Optional anonymized real fixture root. Can also be set with {ANON_FIXTURE_ENV}.",
     )
     parser.add_argument("--keep-runtime", action="store_true", help="Do not remove existing output dir first.")
     args = parser.parse_args()
@@ -57,8 +66,17 @@ def main() -> int:
     synthetic = run_synthetic_comparison(repo_root, rust_bin, runtime / "synthetic", artifacts)
     negatives = run_negative_fixtures(repo_root, rust_bin, runtime / "negative", artifacts)
     large = run_large_log_fixture(repo_root, rust_bin, runtime / "large", artifacts)
+    local = None
+    if args.local_fixture:
+        local = run_local_fixture_comparison(
+            repo_root,
+            rust_bin,
+            runtime / "local-fixture",
+            artifacts,
+            args.local_fixture.resolve(),
+        )
 
-    ok = synthetic["ok"] and all(item["ok"] for item in negatives) and large["ok"]
+    ok = synthetic["ok"] and all(item["ok"] for item in negatives) and large["ok"] and (local is None or local["ok"])
     return 0 if ok else 1
 
 
@@ -217,6 +235,107 @@ def run_synthetic_comparison(
         "notes_diff": notes_diff,
         "state_diff": state_diff,
     }
+
+
+def run_local_fixture_comparison(
+    repo_root: Path,
+    rust_bin: Path,
+    runtime: Path,
+    artifacts: Path,
+    fixture_root: Path,
+) -> dict[str, Any]:
+    assert_anonymized_fixture_safe(fixture_root)
+    if runtime.exists():
+        shutil.rmtree(runtime)
+    python_env = RuntimeEnv.create(runtime / "python")
+    rust_env = RuntimeEnv.create(runtime / "rust")
+    install_local_fixture(fixture_root, python_env)
+    install_local_fixture(fixture_root, rust_env)
+
+    step = compare_step(
+        "local-fixture",
+        repo_root,
+        rust_bin,
+        python_env,
+        rust_env,
+        runtime / "rust-output",
+    )
+    notes_diff = diff_note_trees(python_env.vault / "Codex", rust_env.vault / "Codex")
+    state_diff = diff_existing_state(python_env, rust_env)
+    result = {
+        "ok": step["ok"] and not notes_diff and not state_diff,
+        "fixture_root": normalize_runtime_path(str(fixture_root)),
+        "summary": step,
+        "notes_diff": notes_diff,
+        "state_diff": state_diff,
+    }
+    write_json(artifacts / "local-fixture.diff.json", result)
+    return result
+
+
+def install_local_fixture(fixture_root: Path, env: "RuntimeEnv") -> None:
+    codex_source = first_existing(fixture_root / "codex-home", fixture_root / ".codex")
+    if codex_source is None:
+        raise RuntimeError("Local fixture must contain codex-home/ or .codex/")
+    ensure_no_symlinks(codex_source)
+    shutil.rmtree(env.codex_home)
+    shutil.copytree(codex_source, env.codex_home)
+
+    vault_source = fixture_root / "vault"
+    if vault_source.exists():
+        ensure_no_symlinks(vault_source)
+        shutil.rmtree(env.vault)
+        shutil.copytree(vault_source, env.vault)
+
+    state_source = first_existing(
+        fixture_root / "sync-state.json",
+        fixture_root / "state" / "sync-state.json",
+    )
+    if state_source is not None:
+        ensure_no_symlinks(state_source)
+        private_mkdir(env.state_file.parent)
+        shutil.copy2(state_source, env.state_file)
+
+
+def first_existing(*paths: Path) -> Path | None:
+    for path in paths:
+        if path.exists():
+            return path
+    return None
+
+
+def diff_existing_state(python_env: "RuntimeEnv", rust_env: "RuntimeEnv") -> dict[str, Any]:
+    if not python_env.state_file.exists() or not rust_env.state_file.exists():
+        return {
+            "python_state_exists": python_env.state_file.exists(),
+            "rust_state_exists": rust_env.state_file.exists(),
+        }
+    return diff_json_values(
+        normalize_state(read_json(python_env.state_file), python_env.codex_home),
+        normalize_state(read_json(rust_env.state_file), rust_env.codex_home),
+    )
+
+
+def assert_anonymized_fixture_safe(fixture_root: Path) -> None:
+    if not fixture_root.is_dir():
+        raise RuntimeError(f"Local fixture root does not exist: {fixture_root}")
+    ensure_no_symlinks(fixture_root)
+    for path in sorted(fixture_root.rglob("*")):
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        if is_binary(data):
+            raise RuntimeError(f"binary file is not allowed in local fixture: {path}")
+        text = data.decode("utf-8", errors="ignore")
+        if pattern := find_first_leak(text):
+            raise RuntimeError(f"private content pattern {pattern!r} found in local fixture: {path}")
+
+
+def ensure_no_symlinks(root: Path) -> None:
+    paths = [root] if root.is_file() else [root, *root.rglob("*")]
+    for path in paths:
+        if path.is_symlink():
+            raise RuntimeError(f"symlink is not allowed in local fixture: {path}")
 
 
 def compare_step(
