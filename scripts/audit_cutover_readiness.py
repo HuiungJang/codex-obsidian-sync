@@ -19,6 +19,7 @@ from typing import Any
 
 DEFAULT_REPOSITORY = "HuiungJang/codex-obsidian-sync"
 FORMULA_NAME = "codex-obsidian-sync"
+DEFAULT_LAUNCHD_LABEL = "com.codex.obsidian-sync"
 MONITOR_MARKER = ".codex-obsidian-sync-cutover-monitor"
 MONITOR_MARKER_CONTENT = "managed by record_cutover_monitor.py\n"
 TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin")
@@ -671,16 +672,26 @@ def audit_launchagent(
             bool_mismatch_reason="status reports launchd_loaded=false",
             type_mismatch_reason="status launchd_loaded is not boolean true",
         )
+        if status.get("launchd_label") != DEFAULT_LAUNCHD_LABEL:
+            reasons.append("status launchd_label does not match expected label")
         if status.get("last_error") not in (None, "none", "never run"):
             reasons.append(f"last_error is {status.get('last_error')}")
 
-    program_arguments = list(plist.get("ProgramArguments") or []) if plist else []
+    program_arguments = validated_program_arguments(plist.get("ProgramArguments"), reasons) if plist else []
+    plist_label = plist.get("Label") if plist else None
+    config_path = config_argument_path(program_arguments)
+    details["plist_label"] = plist_label
     details["program_arg0"] = program_arguments[0] if program_arguments else None
+    details["config_path"] = config_path
     details["service_command"] = program_arguments[-1] if program_arguments else None
+    if plist and plist_label != DEFAULT_LAUNCHD_LABEL:
+        reasons.append("LaunchAgent Label does not match expected label")
     if not program_arguments:
         reasons.append("LaunchAgent ProgramArguments are missing")
-    elif program_arguments[-1] != "service-run":
-        reasons.append("LaunchAgent does not end with service-run")
+    else:
+        if program_arguments[-1] != "service-run":
+            reasons.append("LaunchAgent does not end with service-run")
+        validate_config_argument(program_arguments, reasons)
 
     if expected_current_program_arg0 and (
         not program_arguments or program_arguments[0] != expected_current_program_arg0
@@ -688,6 +699,49 @@ def audit_launchagent(
         reasons.append("current ProgramArguments[0] does not match expected pre-cutover binary")
 
     return check("launchagent current state", not reasons, details, reasons)
+
+
+def validated_program_arguments(value: Any, reasons: list[str]) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        reasons.append("LaunchAgent ProgramArguments is not a list")
+        return []
+    if not all(isinstance(item, str) and item for item in value):
+        reasons.append("LaunchAgent ProgramArguments contains non-string or empty values")
+        return []
+    return value
+
+
+def validate_config_argument(program_arguments: list[str], reasons: list[str]) -> None:
+    config_indexes = [index for index, argument in enumerate(program_arguments) if argument == "--config"]
+    if not config_indexes:
+        reasons.append("LaunchAgent ProgramArguments must include --config before service-run")
+        return
+    if len(config_indexes) > 1:
+        reasons.append("LaunchAgent ProgramArguments contains multiple --config values")
+        return
+
+    config_index = config_indexes[0]
+    service_index = len(program_arguments) - 1
+    if config_index >= service_index - 1:
+        reasons.append("LaunchAgent --config value is missing before service-run")
+        return
+
+    config_path = program_arguments[config_index + 1]
+    if not Path(config_path).is_absolute():
+        reasons.append("LaunchAgent --config path is not absolute")
+
+
+def config_argument_path(program_arguments: list[str]) -> str | None:
+    try:
+        config_index = program_arguments.index("--config")
+    except ValueError:
+        return None
+    value_index = config_index + 1
+    if value_index >= len(program_arguments) - 1:
+        return None
+    return program_arguments[value_index]
 
 
 def audit_monitor_dir(monitor_dir: Path) -> dict[str, Any]:

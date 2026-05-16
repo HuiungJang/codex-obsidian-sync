@@ -1049,6 +1049,218 @@ class AuditCutoverReadinessTests(unittest.TestCase):
         self.assertIn("status snapshot: status launchd_loaded is not boolean", report["no_go_reasons"])
         self.assertIn("launchagent current state: status launchd_loaded is not boolean true", report["no_go_reasons"])
 
+    def test_fails_when_current_status_label_is_unexpected(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path, label="com.codex.obsidian-sync.other")
+            write_plist(plist_path, str(rollback_binary))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "launchagent current state: status launchd_label does not match expected label",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_current_plist_label_is_unexpected(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary), label="com.codex.obsidian-sync.other")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "launchagent current state: LaunchAgent Label does not match expected label",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_current_plist_missing_config_argument(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary), include_config=False)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "launchagent current state: LaunchAgent ProgramArguments must include --config before service-run",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_current_config_path_is_relative(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary), config_path="relative-config.toml")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "launchagent current state: LaunchAgent --config path is not absolute",
+            report["no_go_reasons"],
+        )
+
     def assertCheckOk(self, report: dict[str, object], name: str) -> None:
         checks = report["checks"]
         self.assertIsInstance(checks, list)
@@ -1270,11 +1482,12 @@ def write_homebrew_smoke_summary(
     )
 
 
-def write_status(path: Path, plist_path: Path) -> None:
+def write_status(path: Path, plist_path: Path, *, label: str = "com.codex.obsidian-sync") -> None:
     path.write_text(
         json.dumps(
             {
                 "configured": True,
+                "launchd_label": label,
                 "launchd_loaded": True,
                 "plist_path": str(plist_path),
                 "last_error": "none",
@@ -1286,17 +1499,23 @@ def write_status(path: Path, plist_path: Path) -> None:
     )
 
 
-def write_plist(path: Path, program_arg0: str) -> None:
+def write_plist(
+    path: Path,
+    program_arg0: str,
+    *,
+    label: str = "com.codex.obsidian-sync",
+    config_path: str = "/tmp/config.toml",
+    include_config: bool = True,
+) -> None:
+    program_arguments = [program_arg0]
+    if include_config:
+        program_arguments.extend(["--config", config_path])
+    program_arguments.append("service-run")
     path.write_bytes(
         plistlib.dumps(
             {
-                "Label": "com.codex.obsidian-sync",
-                "ProgramArguments": [
-                    program_arg0,
-                    "--config",
-                    "/tmp/config.toml",
-                    "service-run",
-                ],
+                "Label": label,
+                "ProgramArguments": program_arguments,
             },
             fmt=plistlib.FMT_XML,
             sort_keys=False,
