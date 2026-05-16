@@ -42,18 +42,31 @@ def main() -> int:
         label=label,
         timeout_seconds=args.timeout_seconds,
     )
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        write_json(args.output, result)
+    output = resolve_output_path(args.output)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        write_json(output, result)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
+
+
+def resolve_output_path(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    output = path.expanduser()
+    if output.is_symlink():
+        raise RuntimeError(f"Output path is a symlink: {output}")
+    return output
 
 
 def prepare_work_dir(path: Path | None, *, keep: bool) -> Path:
     created = path is None
     if path is None:
         path = Path(tempfile.mkdtemp(prefix="codex-obsidian-sync-launchagent-smoke-"))
-    path = path.expanduser().resolve()
+    path = path.expanduser()
+    if path.is_symlink():
+        raise RuntimeError(f"Work dir is a symlink: {path}")
+    path = path.resolve()
     validate_work_dir(path)
 
     if path.exists():

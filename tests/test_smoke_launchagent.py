@@ -9,6 +9,10 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory, gettempdir
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import smoke_launchagent
+
 
 class SmokeLaunchAgentTests(unittest.TestCase):
     def test_bootstraps_kickstarts_and_bootouts_isolated_label(self) -> None:
@@ -56,6 +60,49 @@ class SmokeLaunchAgentTests(unittest.TestCase):
         self.assertIn("bootstrap", log)
         self.assertIn("kickstart -k", log)
         self.assertIn("bootout", log)
+
+    def test_refuses_symlinked_output_report_path(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            output_target = root / "target-summary.json"
+            output = root / "summary.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            with self.assertRaisesRegex(RuntimeError, "Output path is a symlink"):
+                smoke_launchagent.resolve_output_path(output)
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
+
+    def test_rejects_symlinked_work_dir(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            binary = write_fake_binary(root)
+            work_target = root / "work-target"
+            work_target.mkdir()
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-launchagent-smoke-{root.name}"
+            remove_path(work_dir)
+            work_dir.symlink_to(work_target, target_is_directory=True)
+
+            try:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/smoke_launchagent.py",
+                        "--binary",
+                        str(binary),
+                        "--work-dir",
+                        str(work_dir),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            finally:
+                remove_path(work_dir)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Work dir is a symlink", result.stderr)
 
     def test_rejects_boolean_processed_summary(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-launchagent-test-") as temp_dir:
@@ -234,6 +281,13 @@ raise SystemExit(2)
     )
     launchctl.chmod(0o755)
     return launchctl
+
+
+def remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
 
 
 if __name__ == "__main__":
