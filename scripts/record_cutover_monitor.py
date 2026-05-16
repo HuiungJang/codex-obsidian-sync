@@ -165,7 +165,9 @@ def build_record(
     allow_skipped_invalid_increase: bool,
     note_paths: list[Path],
 ) -> dict[str, Any]:
-    program_arguments = list(plist.get("ProgramArguments") or [])
+    no_go_reasons: list[str] = []
+    program_arguments = validated_program_arguments(plist.get("ProgramArguments"), no_go_reasons)
+    config_path = config_argument_path(program_arguments)
     status_launchd_label = status.get("launchd_label")
     plist_label = plist.get("Label")
     last_summary = status.get("last_summary") if isinstance(status.get("last_summary"), dict) else {}
@@ -193,8 +195,6 @@ def build_record(
         ],
         default=current_success,
     )
-    no_go_reasons: list[str] = []
-
     if checkpoint not in CHECKPOINTS:
         no_go_reasons.append(f"unexpected checkpoint: {checkpoint}")
     validate_status_flag(
@@ -228,8 +228,12 @@ def build_record(
         no_go_reasons.append(f"last_error is {status.get('last_error')}")
     if expected_program_arg0 and (not program_arguments or program_arguments[0] != expected_program_arg0):
         no_go_reasons.append("ProgramArguments[0] does not match expected binary")
-    if not program_arguments or program_arguments[-1] != "service-run":
-        no_go_reasons.append("LaunchAgent does not end with service-run")
+    if not program_arguments:
+        no_go_reasons.append("LaunchAgent ProgramArguments are missing")
+    else:
+        if program_arguments[-1] != "service-run":
+            no_go_reasons.append("LaunchAgent does not end with service-run")
+        validate_config_argument(program_arguments, no_go_reasons)
     for field, value in summary_counters.items():
         if value is None:
             no_go_reasons.append(f"last_summary {field} is missing or not a non-negative integer")
@@ -263,6 +267,7 @@ def build_record(
         "plist_path": status.get("plist_path"),
         "program_arg0": program_arguments[0] if program_arguments else None,
         "program_arguments_count": len(program_arguments),
+        "config_path": config_path,
         "service_command": program_arguments[-1] if program_arguments else None,
         "last_run": status.get("last_run"),
         "last_success": last_success,
@@ -318,6 +323,49 @@ def non_negative_int_value(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return None
+
+
+def validated_program_arguments(value: Any, reasons: list[str]) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        reasons.append("LaunchAgent ProgramArguments is not a list")
+        return []
+    if not all(isinstance(item, str) and item for item in value):
+        reasons.append("LaunchAgent ProgramArguments contains non-string or empty values")
+        return []
+    return value
+
+
+def validate_config_argument(program_arguments: list[str], reasons: list[str]) -> None:
+    config_indexes = [index for index, argument in enumerate(program_arguments) if argument == "--config"]
+    if not config_indexes:
+        reasons.append("LaunchAgent ProgramArguments must include --config before service-run")
+        return
+    if len(config_indexes) > 1:
+        reasons.append("LaunchAgent ProgramArguments contains multiple --config values")
+        return
+
+    config_index = config_indexes[0]
+    service_index = len(program_arguments) - 1
+    if config_index >= service_index - 1:
+        reasons.append("LaunchAgent --config value is missing before service-run")
+        return
+
+    config_path = program_arguments[config_index + 1]
+    if not Path(config_path).is_absolute():
+        reasons.append("LaunchAgent --config path is not absolute")
+
+
+def config_argument_path(program_arguments: list[str]) -> str | None:
+    try:
+        config_index = program_arguments.index("--config")
+    except ValueError:
+        return None
+    value_index = config_index + 1
+    if value_index >= len(program_arguments) - 1:
+        return None
+    return program_arguments[value_index]
 
 
 def validate_status_flag(

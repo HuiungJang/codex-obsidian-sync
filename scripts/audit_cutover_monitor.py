@@ -178,6 +178,11 @@ def validate_record(
         reasons.append(f"{expected_checkpoint}: service command is not service-run")
     if expected_program_arg0 and record.get("program_arg0") != expected_program_arg0:
         reasons.append(f"{expected_checkpoint}: ProgramArguments[0] does not match expected binary")
+    config_path = record.get("config_path")
+    if not isinstance(config_path, str) or not config_path:
+        reasons.append(f"{expected_checkpoint}: config_path is missing")
+    elif not Path(config_path).is_absolute():
+        reasons.append(f"{expected_checkpoint}: config_path is not absolute")
     if record.get("last_error") not in (None, "none", "never run"):
         reasons.append(f"{expected_checkpoint}: last_error is {record.get('last_error')}")
     if parse_iso_datetime(record.get("recorded_at")) is None:
@@ -201,10 +206,13 @@ def validate_sequence(records: list[dict[str, Any]]) -> list[str]:
         if record.get("status_launchd_label") or record.get("plist_label")
     }
     program_arg0_values = {record.get("program_arg0") for record in records if record.get("program_arg0")}
+    config_path_values = {record.get("config_path") for record in records if record.get("config_path")}
     if len(label_values) > 1:
         reasons.append("LaunchAgent label changed across monitor records")
     if len(program_arg0_values) > 1:
         reasons.append("ProgramArguments[0] changed across monitor records")
+    if len(config_path_values) > 1:
+        reasons.append("LaunchAgent --config path changed across monitor records")
 
     for record in records:
         checkpoint = str(record.get("checkpoint"))
@@ -241,6 +249,7 @@ def summarize_record(record: dict[str, Any], path: Path) -> dict[str, Any]:
         "status_launchd_label": record.get("status_launchd_label"),
         "plist_label": record.get("plist_label"),
         "program_arg0": record.get("program_arg0"),
+        "config_path": record.get("config_path"),
         "last_success": record.get("last_success"),
         "last_error": record.get("last_error"),
         "skipped_invalid": record.get("skipped_invalid"),
