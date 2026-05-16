@@ -163,6 +163,7 @@ def validate_status_sources(root: Path, file_entries: list[dict[str, Any]]) -> l
             status=status,
             status_field="plist_path",
         )
+        + validate_launchagent_config_source(root, status)
     )
 
 
@@ -196,6 +197,42 @@ def validate_source_path(
     elif source_path.resolve() != status_path.resolve():
         reasons.append(f"backup file source does not match status {status_field}: {backup_name}")
     return reasons
+
+
+def validate_launchagent_config_source(root: Path, status: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    status_config_path = status.get("config_path")
+    if not isinstance(status_config_path, str) or not status_config_path:
+        reasons.append("backup status.json config_path is missing")
+        return reasons
+    status_path = Path(status_config_path).expanduser()
+    if not status_path.is_absolute():
+        reasons.append("backup status.json config_path is not absolute")
+        return reasons
+
+    launchagent_config_path = launchagent_config_argument_path(root)
+    if launchagent_config_path is None:
+        return reasons
+    launchagent_path = Path(launchagent_config_path).expanduser()
+    if launchagent_path.is_absolute() and launchagent_path.resolve() != status_path.resolve():
+        reasons.append("backup LaunchAgent --config path does not match status config_path")
+    return reasons
+
+
+def launchagent_config_argument_path(root: Path) -> str | None:
+    path = root / "launchagent.plist"
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        plist = plistlib.loads(path.read_bytes())
+    except plistlib.InvalidFileException:
+        return None
+    if not isinstance(plist, dict):
+        return None
+    program_arguments = plist.get("ProgramArguments")
+    if not isinstance(program_arguments, list) or not all(isinstance(item, str) and item for item in program_arguments):
+        return None
+    return config_argument_path(program_arguments)
 
 
 def validate_launchagent_backup(root: Path) -> list[str]:
@@ -254,6 +291,17 @@ def validate_config_argument(program_arguments: list[str], reasons: list[str]) -
     config_path = program_arguments[config_index + 1]
     if not Path(config_path).is_absolute():
         reasons.append("backup LaunchAgent --config path is not absolute")
+
+
+def config_argument_path(program_arguments: list[str]) -> str | None:
+    try:
+        config_index = program_arguments.index("--config")
+    except ValueError:
+        return None
+    value_index = config_index + 1
+    if value_index >= len(program_arguments) - 1:
+        return None
+    return program_arguments[value_index]
 
 
 def audit_file_entry(root: Path, entry: dict[str, Any]) -> dict[str, Any]:

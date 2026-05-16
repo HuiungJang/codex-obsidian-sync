@@ -506,6 +506,51 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("backup status.json plist_path is not absolute", report["no_go_reasons"])
 
+    def test_fails_when_captured_status_config_path_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            status_path = backup_dir / "status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            del status["config_path"]
+            status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+            update_manifest_file_entry(backup_dir, "status.json")
+
+            report = audit_cutover_backup.audit_backup_dir(backup_dir)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("backup status.json config_path is missing", report["no_go_reasons"])
+
+    def test_fails_when_captured_status_config_path_is_relative(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            status_path = backup_dir / "status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            status["config_path"] = "config.toml"
+            status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+            update_manifest_file_entry(backup_dir, "status.json")
+
+            report = audit_cutover_backup.audit_backup_dir(backup_dir)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("backup status.json config_path is not absolute", report["no_go_reasons"])
+
+    def test_fails_when_captured_status_config_path_differs_from_launchagent_config(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            status_path = backup_dir / "status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            status["config_path"] = "/tmp/other-config.toml"
+            status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+            update_manifest_file_entry(backup_dir, "status.json")
+
+            report = audit_cutover_backup.audit_backup_dir(backup_dir)
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "backup LaunchAgent --config path does not match status config_path",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_backup_directory_is_symlink(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
             root = Path(temp_dir)
@@ -540,7 +585,15 @@ def create_backup(root: Path) -> Path:
     state.write_text('{"files": {}}\n', encoding="utf-8")
     write_launchagent_plist(plist)
     status.write_text(
-        json.dumps({"configured": True, "state_file": str(state), "plist_path": str(plist)}) + "\n",
+        json.dumps(
+            {
+                "configured": True,
+                "state_file": str(state),
+                "plist_path": str(plist),
+                "config_path": "/tmp/config.toml",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     launchctl.write_text("state = running\n", encoding="utf-8")
