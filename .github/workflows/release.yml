@@ -123,10 +123,10 @@ jobs:
             --output dist/codex-obsidian-sync.rb
           ruby -c dist/codex-obsidian-sync.rb
 
-      - name: Publish release
+      - name: Publish prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --title "${GITHUB_REF_NAME}" --notes "Rust binary release ${GITHUB_REF_NAME}"
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --prerelease --title "${GITHUB_REF_NAME}" --notes "Rust binary release ${GITHUB_REF_NAME}"
 
       - name: Smoke Homebrew formula
         env:
@@ -151,6 +151,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${GITHUB_REF_NAME}" dist/*smoke-summary.json dist/release-evidence-summary.json --clobber
+
+      - name: Promote verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --prerelease=false --latest
 
       - name: Audit published release assets
         env:
