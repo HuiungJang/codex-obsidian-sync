@@ -266,6 +266,7 @@ def read_checksum(path: Path, package_name: str) -> str:
 
 
 def validate_tarball_shape(tarball: Path) -> None:
+    expected_binary_path = expected_tarball_binary_path(tarball)
     with tarfile.open(tarball, "r:gz") as archive:
         members = archive.getmembers()
         binary_members = []
@@ -284,8 +285,15 @@ def validate_tarball_shape(tarball: Path) -> None:
         if len(binary_members) != 1:
             raise ValueError(f"expected exactly one {FORMULA_NAME} binary in tarball, found {len(binary_members)}")
         binary_member = binary_members[0]
+        if Path(binary_member.name) != expected_binary_path:
+            raise ValueError(f"release tarball binary path is unexpected: {binary_member.name}")
         if binary_member.mode & 0o111 == 0:
             raise ValueError(f"release tarball binary is not executable: {binary_member.name}")
+
+
+def expected_tarball_binary_path(tarball: Path) -> Path:
+    package_root = tarball.name.removesuffix(".tar.gz")
+    return Path(package_root) / FORMULA_NAME
 
 
 def audit_homebrew_formula(
