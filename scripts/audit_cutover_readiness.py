@@ -587,7 +587,8 @@ def audit_launchagent(
 
 
 def audit_monitor_dir(monitor_dir: Path) -> dict[str, Any]:
-    path = monitor_dir.expanduser().resolve()
+    requested_path = monitor_dir.expanduser()
+    path = requested_path.resolve()
     details: dict[str, Any] = {"path": str(path)}
     reasons: list[str] = []
     temp_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
@@ -600,7 +601,9 @@ def audit_monitor_dir(monitor_dir: Path) -> dict[str, Any]:
     unexpected_entry_names: list[str] = []
     symlink_names: list[str] = []
     failed_records: list[str] = []
-    if path.exists():
+    if requested_path.is_symlink():
+        reasons.append("monitor dir is a symlink")
+    elif path.exists():
         marker = path / MONITOR_MARKER
         if marker.is_symlink():
             reasons.append("monitor dir marker is a symlink")
