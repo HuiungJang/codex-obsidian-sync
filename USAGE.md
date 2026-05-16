@@ -547,6 +547,7 @@ GitHub Release:
 - `x86_64-apple-darwin` artifact와 checksum이 있어야 한다
 - downloaded `.tar.gz`는 같은 directory의 `.sha256`으로 `shasum -a 256 -c`가 통과해야 한다
 - installed binary는 `codex-obsidian-sync --version`으로 release version을 보고해야 한다
+- `python3 scripts/smoke_release_artifact.py --tarball <artifact>.tar.gz --checksum <artifact>.tar.gz.sha256 --expected-version <version>`이 통과해야 한다
 
 Homebrew cutover:
 
