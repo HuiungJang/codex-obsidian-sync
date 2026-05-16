@@ -9,6 +9,7 @@ use crate::cli::SyncOnceArgs;
 use crate::error::SyncError;
 
 const DEFAULT_STATE_DIRNAME: &str = "obsidian-sync";
+const DEFAULT_LAUNCHD_LABEL: &str = "com.codex.obsidian-sync";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncConfig {
@@ -22,6 +23,23 @@ pub struct SyncConfig {
     pub candidate_file_limit: u32,
     pub candidate_bytes_limit: u64,
     pub log_level: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServicePaths {
+    pub config_path: PathBuf,
+    pub codex_home: PathBuf,
+    pub state_dir: PathBuf,
+    pub session_index_path: PathBuf,
+    pub sessions_path: PathBuf,
+    pub sync_state_file: PathBuf,
+    pub sync_lock_file: PathBuf,
+    pub service_state_file: PathBuf,
+    pub service_runner_lock_file: PathBuf,
+    pub service_state_lock_file: PathBuf,
+    pub launchd_plist_path: PathBuf,
+    pub launchd_stdout_path: PathBuf,
+    pub launchd_stderr_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -80,11 +98,19 @@ pub fn default_config_path() -> Result<PathBuf, SyncError> {
         .join("config.toml"))
 }
 
+pub fn default_launchd_label() -> &'static str {
+    DEFAULT_LAUNCHD_LABEL
+}
+
+pub fn resolve_config_path(path: Option<&Path>) -> Result<PathBuf, SyncError> {
+    match path {
+        Some(path) => expand_user_path(path),
+        None => default_config_path(),
+    }
+}
+
 pub fn load_toml_config(path: Option<&Path>) -> Result<TomlConfig, SyncError> {
-    let config_path = match path {
-        Some(path) => expand_user_path(path)?,
-        None => default_config_path()?,
-    };
+    let config_path = resolve_config_path(path)?;
     if !config_path.exists() {
         return Ok(TomlConfig::empty());
     }
@@ -92,6 +118,84 @@ pub fn load_toml_config(path: Option<&Path>) -> Result<TomlConfig, SyncError> {
     let content = fs::read_to_string(config_path).map_err(|_| SyncError::Config)?;
     let raw = content.parse::<Table>().map_err(|_| SyncError::Config)?;
     Ok(TomlConfig { raw })
+}
+
+pub fn resolve_service_paths(
+    config_path: Option<&Path>,
+    config: &TomlConfig,
+) -> Result<ServicePaths, SyncError> {
+    let resolved_config_path = resolve_config_path(config_path)?;
+    let codex_home = resolve_path(
+        None,
+        string_value(config.raw(), "codex_home"),
+        Some(default_codex_home()?),
+        "codex_home",
+    )?;
+    let state_dir = codex_home.join(DEFAULT_STATE_DIRNAME);
+    let sync_state_file = resolve_path(
+        None,
+        string_value(config.raw(), "state_file"),
+        Some(state_dir.join("sync-state.json")),
+        "state_file",
+    )?;
+    let sync_lock_file = resolve_path(
+        None,
+        string_value(config.raw(), "lock_file"),
+        Some(sync_state_file.with_extension("lock")),
+        "lock_file",
+    )?;
+    let service_state_file = resolve_path(
+        None,
+        string_value(config.raw(), "service_state_file"),
+        Some(state_dir.join("service-state.json")),
+        "service_state_file",
+    )?;
+    let service_runner_lock_file = resolve_path(
+        None,
+        string_value(config.raw(), "service_runner_lock_file"),
+        Some(state_dir.join("service-runner.lock")),
+        "service_runner_lock_file",
+    )?;
+    let service_state_lock_file = resolve_path(
+        None,
+        string_value(config.raw(), "service_state_lock_file"),
+        Some(state_dir.join("service-state.lock")),
+        "service_state_lock_file",
+    )?;
+    let launch_agents = home_dir()?.join("Library").join("LaunchAgents");
+    let launchd_plist_path = resolve_path(
+        None,
+        string_value(config.raw(), "launchd_plist_path"),
+        Some(launch_agents.join(format!("{DEFAULT_LAUNCHD_LABEL}.plist"))),
+        "launchd_plist_path",
+    )?;
+    let launchd_stdout_path = resolve_path(
+        None,
+        string_value(config.raw(), "launchd_stdout_path"),
+        Some(state_dir.join("launchd.stdout.log")),
+        "launchd_stdout_path",
+    )?;
+    let launchd_stderr_path = resolve_path(
+        None,
+        string_value(config.raw(), "launchd_stderr_path"),
+        Some(state_dir.join("launchd.stderr.log")),
+        "launchd_stderr_path",
+    )?;
+    Ok(ServicePaths {
+        config_path: resolved_config_path,
+        session_index_path: codex_home.join("session_index.jsonl"),
+        sessions_path: codex_home.join("sessions"),
+        codex_home,
+        state_dir,
+        sync_state_file,
+        sync_lock_file,
+        service_state_file,
+        service_runner_lock_file,
+        service_state_lock_file,
+        launchd_plist_path,
+        launchd_stdout_path,
+        launchd_stderr_path,
+    })
 }
 
 pub fn resolve_sync_config(
@@ -192,7 +296,7 @@ fn resolve_path(
     Ok(path)
 }
 
-fn expand_user_path(path: &Path) -> Result<PathBuf, SyncError> {
+pub fn expand_user_path(path: &Path) -> Result<PathBuf, SyncError> {
     let text = path.to_string_lossy();
     if text == "~" {
         return home_dir();

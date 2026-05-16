@@ -18,7 +18,10 @@ Sync local Codex conversations into an Obsidian vault
 Usage: codex-obsidian-sync-rs [OPTIONS] <COMMAND>
 
 Commands:
-  sync-once  Run one dry-run sync pass
+  inspect-rollout  Inspect one rollout file as redacted JSON
+  inspect-recent   Inspect recent rollout files as redacted JSON
+  status           Show read-only service status
+  sync-once        Run one dry-run sync pass
 
 Options:
       --config <CONFIG>  Path to config.toml
@@ -101,7 +104,9 @@ fn invalid_recent_days_exits_nonzero() {
 #[test]
 fn sync_once_command_shape_defaults_to_dry_run_contract() {
     let cli = Cli::try_parse_from([BIN, "sync-once"]).unwrap();
-    let CliCommand::SyncOnce(args) = cli.command;
+    let CliCommand::SyncOnce(args) = cli.command else {
+        panic!("expected sync-once command");
+    };
 
     assert!(args.dry_run_output.is_none());
     assert_eq!(args.include_subagents, None);
@@ -110,7 +115,9 @@ fn sync_once_command_shape_defaults_to_dry_run_contract() {
 #[test]
 fn include_subagents_records_command_line_override() {
     let cli = Cli::try_parse_from([BIN, "sync-once", "--include-subagents"]).unwrap();
-    let CliCommand::SyncOnce(args) = cli.command;
+    let CliCommand::SyncOnce(args) = cli.command else {
+        panic!("expected sync-once command");
+    };
 
     assert_eq!(args.include_subagents, Some(true));
 }
