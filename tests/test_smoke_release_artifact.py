@@ -146,6 +146,23 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
+    def test_rejects_duplicate_tarball_member_path(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            member_name = "codex-obsidian-sync-aarch64-apple-darwin/codex-obsidian-sync"
+            tarball = write_tarball_with_files(root, [member_name, member_name])
+            checksum = write_checksum(tarball)
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = run_smoke(tarball=tarball, checksum=checksum, work_dir=work_dir)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Duplicate tar member path", result.stderr)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
     def test_rejects_symlinked_tarball(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
             root = Path(temp_dir)
@@ -216,12 +233,17 @@ def write_release_tarball(root: Path) -> Path:
 
 
 def write_tarball_with_file(root: Path, arcname: str) -> Path:
+    return write_tarball_with_files(root, [arcname])
+
+
+def write_tarball_with_files(root: Path, arcnames: list[str]) -> Path:
     tarball = root / "codex-obsidian-sync-aarch64-apple-darwin.tar.gz"
     payload = b"unsafe"
     with tarfile.open(tarball, "w:gz") as archive:
-        info = tarfile.TarInfo(arcname)
-        info.size = len(payload)
-        archive.addfile(info, io.BytesIO(payload))
+        for arcname in arcnames:
+            info = tarfile.TarInfo(arcname)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
     return tarball
 
 

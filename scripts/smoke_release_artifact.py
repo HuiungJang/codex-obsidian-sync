@@ -240,10 +240,14 @@ def safe_extract_tarball(tarball: Path, extract_dir: Path) -> None:
     private_mkdir(extract_dir)
     with tarfile.open(tarball, "r:gz") as archive:
         members = archive.getmembers()
+        seen_paths: set[Path] = set()
         for member in members:
             member_path = Path(member.name)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise RuntimeError(f"Unsafe tar member path: {member.name}")
+            if member_path in seen_paths:
+                raise RuntimeError(f"Duplicate tar member path: {member.name}")
+            seen_paths.add(member_path)
             if not (member.isfile() or member.isdir()):
                 raise RuntimeError(f"Unsupported tar member type: {member.name}")
         archive.extractall(extract_dir, members=members)
