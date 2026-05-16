@@ -6,6 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use codex_obsidian_sync_rs::config::SyncConfig;
 use codex_obsidian_sync_rs::dry_run_output::DryRunOutput;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[test]
 fn prepare_rejects_output_inside_real_vault_codex_home_and_state_dir() {
     let root = temp_dir("dangerous-roots");
@@ -89,6 +92,22 @@ fn prepare_creates_preserved_default_temp_output() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn default_output_uses_private_permissions_for_directory_and_files() {
+    let root = temp_dir("default-permissions");
+    let config = sync_config(&root);
+
+    let dry_run = DryRunOutput::prepare(&config, None).unwrap();
+    dry_run
+        .write_relative("Codex/private.md", "secret")
+        .unwrap();
+
+    assert_eq!(mode(dry_run.root()), 0o700);
+    assert_eq!(mode(&dry_run.root().join("Codex")), 0o700);
+    assert_eq!(mode(&dry_run.root().join("Codex/private.md")), 0o600);
+}
+
 #[test]
 fn overlay_read_prefers_output_then_real_vault_without_mutating_inputs() {
     let root = temp_dir("overlay");
@@ -156,6 +175,20 @@ fn write_rejects_symlink_parent_escape() {
             .is_err()
     );
     assert!(!outside.join("new-dir").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn write_rejects_root_symlink_swap_before_creating_parent() {
+    let root = temp_dir("root-symlink-swap");
+    let config = sync_config(&root);
+    let output = root.join("output");
+    let dry_run = DryRunOutput::prepare(&config, Some(&output)).unwrap();
+    fs::remove_dir(&output).unwrap();
+    std::os::unix::fs::symlink(&config.vault, &output).unwrap();
+
+    assert!(dry_run.write_relative("Codex/escape.md", "x").is_err());
+    assert!(!config.vault.join("Codex").exists());
 }
 
 #[test]
@@ -229,6 +262,11 @@ fn file_hash(path: &Path) -> u64 {
         .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
             hash.wrapping_mul(0x100_0000_01b3) ^ u64::from(byte)
         })
+}
+
+#[cfg(unix)]
+fn mode(path: &Path) -> u32 {
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
 fn temp_dir(name: &str) -> PathBuf {

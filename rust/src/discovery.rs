@@ -614,6 +614,21 @@ fn needs_processing(
     false
 }
 
+pub fn state_entry_needs_processing(
+    state_entry: &StateEntry,
+    rollout_path: &Path,
+    vault_root: &Path,
+    include_subagents: bool,
+) -> bool {
+    needs_processing(
+        state_entry,
+        rollout_path,
+        vault_root,
+        include_subagents,
+        CurrentThreadName::Missing,
+    )
+}
+
 fn thread_name_matches(state_entry: &StateEntry, expected: Option<&str>) -> bool {
     match (state_entry.extra.get("thread_name"), expected) {
         (Some(Value::String(actual)), Some(expected)) => actual == expected,

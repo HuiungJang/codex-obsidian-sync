@@ -1,12 +1,16 @@
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
 use serde::Serialize;
 
 use crate::config::SyncConfig;
 use crate::error::SyncError;
+use crate::state_store::{FileFingerprint, file_fingerprint_from_metadata};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DryRunOutput {
@@ -30,7 +34,7 @@ impl DryRunOutput {
             Some(path) => validate_requested_output_root(path, config)?,
             None => create_default_output_root(config)?,
         };
-        let root_canonical = fs::canonicalize(&root).map_err(|_| SyncError::DryRunOutput)?;
+        let root_canonical = validate_prepared_output_root(&root, config)?;
         let vault_root = fs::canonicalize(&config.vault).map_err(|_| SyncError::DryRunOutput)?;
         Ok(Self {
             temp_state_file: root.join("sync-state.json"),
@@ -75,10 +79,39 @@ impl DryRunOutput {
         }
     }
 
+    pub fn exists_relative(&self, relative_path: &str) -> Result<bool, SyncError> {
+        Ok(self.existing_path(relative_path)?.is_some())
+    }
+
+    pub fn fingerprint_relative(
+        &self,
+        relative_path: &str,
+    ) -> Result<Option<FileFingerprint>, SyncError> {
+        let Some(path) = self.existing_path(relative_path)? else {
+            return Ok(None);
+        };
+        let metadata = fs::metadata(path).map_err(|_| SyncError::DryRunOutput)?;
+        Ok(Some(file_fingerprint_from_metadata(&metadata)))
+    }
+
     pub fn write_relative(&self, relative_path: &str, content: &str) -> Result<PathBuf, SyncError> {
         let output_path = self.resolve_output_path(relative_path, true)?;
-        fs::write(&output_path, content).map_err(|_| SyncError::DryRunOutput)?;
+        write_private_file(&output_path, content)?;
         Ok(output_path)
+    }
+
+    fn existing_path(&self, relative_path: &str) -> Result<Option<PathBuf>, SyncError> {
+        let output_path = self.resolve_output_path(relative_path, false)?;
+        if output_path.exists() {
+            return Ok(Some(output_path));
+        }
+
+        let vault_path = resolve_read_path(&self.vault_root, relative_path)?;
+        if vault_path.exists() {
+            Ok(Some(vault_path))
+        } else {
+            Ok(None)
+        }
     }
 
     fn resolve_output_path(
@@ -94,8 +127,7 @@ impl DryRunOutput {
 
         let parent = target.parent().ok_or(SyncError::DryRunOutput)?;
         if create_parent {
-            validate_parent_chain(parent, &self.root_canonical)?;
-            fs::create_dir_all(parent).map_err(|_| SyncError::DryRunOutput)?;
+            create_parent_dirs(parent, &self.root, &self.root_canonical)?;
         } else if !target.exists() && !parent.exists() {
             return Ok(target);
         }
@@ -126,10 +158,30 @@ fn validate_requested_output_root(path: &Path, config: &SyncConfig) -> Result<Pa
             return Err(SyncError::DryRunOutput);
         }
     } else {
-        fs::create_dir_all(path).map_err(|_| SyncError::DryRunOutput)?;
+        create_private_dir_all(path).map_err(|_| SyncError::DryRunOutput)?;
     }
 
     Ok(path.to_path_buf())
+}
+
+fn validate_prepared_output_root(path: &Path, config: &SyncConfig) -> Result<PathBuf, SyncError> {
+    reject_symlink_or_non_directory(path)?;
+    let canonical = fs::canonicalize(path).map_err(|_| SyncError::DryRunOutput)?;
+    reject_resolved_forbidden_output_root(&canonical, config)?;
+    reject_symlink_or_non_directory(path)?;
+    let mut entries = fs::read_dir(path).map_err(|_| SyncError::DryRunOutput)?;
+    if entries.next().is_some() {
+        return Err(SyncError::DryRunOutput);
+    }
+    Ok(canonical)
+}
+
+fn reject_symlink_or_non_directory(path: &Path) -> Result<(), SyncError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| SyncError::DryRunOutput)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(SyncError::DryRunOutput);
+    }
+    Ok(())
 }
 
 fn validate_existing_output_root(path: &Path, config: &SyncConfig) -> Result<PathBuf, SyncError> {
@@ -162,7 +214,7 @@ fn create_default_output_root_in_base(
             std::process::id()
         ));
         reject_forbidden_output_root(&candidate, config)?;
-        match fs::create_dir(&candidate) {
+        match create_private_dir(&candidate) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(_) => return Err(SyncError::DryRunOutput),
@@ -180,8 +232,15 @@ fn create_default_output_root_in_base(
 
 fn reject_forbidden_output_root(path: &Path, config: &SyncConfig) -> Result<(), SyncError> {
     let output_root = resolved_path_for_validation(path)?;
+    reject_resolved_forbidden_output_root(&output_root, config)
+}
+
+fn reject_resolved_forbidden_output_root(
+    output_root: &Path,
+    config: &SyncConfig,
+) -> Result<(), SyncError> {
     for forbidden in forbidden_output_roots(config)? {
-        if is_within_root(&output_root, &forbidden) {
+        if is_within_root(output_root, &forbidden) {
             return Err(SyncError::DryRunOutput);
         }
     }
@@ -264,6 +323,93 @@ fn validate_parent_chain(parent: &Path, root: &Path) -> Result<(), SyncError> {
         return Err(SyncError::DryRunOutput);
     }
     Ok(())
+}
+
+fn create_parent_dirs(parent: &Path, root: &Path, canonical_root: &Path) -> Result<(), SyncError> {
+    let relative_parent = parent
+        .strip_prefix(root)
+        .map_err(|_| SyncError::DryRunOutput)?;
+    let mut current = root.to_path_buf();
+    for component in relative_parent.components() {
+        let Component::Normal(name) = component else {
+            return Err(SyncError::DryRunOutput);
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(SyncError::DryRunOutput);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let parent = current.parent().ok_or(SyncError::DryRunOutput)?;
+                validate_parent_chain(parent, canonical_root)?;
+                match create_private_dir(&current) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(_) => return Err(SyncError::DryRunOutput),
+                }
+            }
+            Err(_) => return Err(SyncError::DryRunOutput),
+        }
+
+        let resolved_current = fs::canonicalize(&current).map_err(|_| SyncError::DryRunOutput)?;
+        if !is_within_root(&resolved_current, canonical_root) {
+            return Err(SyncError::DryRunOutput);
+        }
+    }
+    Ok(())
+}
+
+fn create_private_dir_all(path: &Path) -> io::Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            create_private_dir_all(parent)?;
+        }
+    }
+    match create_private_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    fs::DirBuilder::new().mode(0o700).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir(path)
+}
+
+fn write_private_file(path: &Path, content: &str) -> Result<(), SyncError> {
+    let mut file = open_private_file(path).map_err(|_| SyncError::DryRunOutput)?;
+    file.write_all(content.as_bytes())
+        .map_err(|_| SyncError::DryRunOutput)
+}
+
+#[cfg(unix)]
+fn open_private_file(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_private_file(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
 }
 
 fn is_within_root(target: &Path, root: &Path) -> bool {

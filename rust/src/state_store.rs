@@ -23,10 +23,15 @@ pub struct SyncState {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct StateEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub included: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mtime_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_note_fingerprint: Option<FileFingerprint>,
 
     #[serde(flatten)]
@@ -51,10 +56,14 @@ impl StateEntry {
 
 pub fn file_fingerprint(path: &Path) -> Result<FileFingerprint, SyncError> {
     let metadata = fs::metadata(path).map_err(|_| SyncError::Discovery)?;
-    Ok(FileFingerprint {
+    Ok(file_fingerprint_from_metadata(&metadata))
+}
+
+pub fn file_fingerprint_from_metadata(metadata: &fs::Metadata) -> FileFingerprint {
+    FileFingerprint {
         size: metadata.len(),
-        mtime_ns: metadata_mtime_ns(&metadata),
-    })
+        mtime_ns: metadata_mtime_ns(metadata),
+    }
 }
 
 pub fn load_state_read_only(path: &Path) -> Result<SyncState, SyncError> {
