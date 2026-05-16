@@ -592,12 +592,22 @@ def audit_homebrew_smoke_summary(
     if not isinstance(commands, list):
         reasons.append("Homebrew smoke commands are missing")
     else:
+        homebrew_prefix = successful_brew_prefix(commands, brew_value)
+        details["homebrew_prefix"] = homebrew_prefix
         required_commands = {
             "test": ("test", FORMULA_NAME),
             "uninstall": ("uninstall", "--formula", FORMULA_NAME),
         }
         if not has_successful_brew_command_with_next_arg(commands, ("install", "--formula"), formula_value, brew_value):
             reasons.append("Homebrew smoke did not record successful brew install for recorded formula")
+        if homebrew_prefix is None:
+            reasons.append("Homebrew smoke did not record successful brew prefix")
+        elif not Path(homebrew_prefix).is_absolute():
+            reasons.append("Homebrew smoke brew prefix is not absolute")
+        elif isinstance(installed_binary, str):
+            expected_binary = Path(homebrew_prefix) / "bin" / FORMULA_NAME
+            if Path(installed_binary) != expected_binary:
+                reasons.append("Homebrew smoke installed_binary does not match brew prefix")
         for label, sequence in required_commands.items():
             if not has_successful_brew_command(commands, sequence, brew_value):
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
@@ -1028,6 +1038,24 @@ def command_uses_brew(command_arg0: str, expected_brew: Any = None) -> bool:
     if isinstance(expected_brew, str) and expected_brew:
         return command_arg0 == expected_brew
     return Path(command_arg0).name == "brew"
+
+
+def successful_brew_prefix(commands: list[Any], expected_brew: Any = None) -> str | None:
+    for command in commands:
+        if not isinstance(command, dict) or command.get("returncode") != 0:
+            continue
+        command_value = command.get("command")
+        if not isinstance(command_value, list):
+            continue
+        parts = [str(part) for part in command_value]
+        if (
+            len(parts) == 3
+            and command_uses_brew(parts[0], expected_brew)
+            and parts[1:] == ["--prefix", FORMULA_NAME]
+        ):
+            prefix = str(command.get("stdout") or "").strip()
+            return prefix or None
+    return None
 
 
 def has_successful_version_command(commands: list[Any], expected_output: str, expected_binary: Any) -> bool:

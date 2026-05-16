@@ -1619,7 +1619,11 @@ def write_homebrew_smoke_summary(
                 "commands": [
                     {"command": ["brew", "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
                     {"command": ["brew", "install", "--formula", str(formula.resolve())], "returncode": 0},
-                    {"command": ["brew", "--prefix", "codex-obsidian-sync"], "returncode": 0},
+                    {
+                        "command": ["brew", "--prefix", "codex-obsidian-sync"],
+                        "returncode": 0,
+                        "stdout": "/tmp/codex-obsidian-sync\n",
+                    },
                     {
                         "command": [installed_binary, "--version"],
                         "returncode": 0,
