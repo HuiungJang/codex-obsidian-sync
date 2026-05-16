@@ -8,6 +8,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import audit_service_cutover
+
 
 class AuditServiceCutoverTests(unittest.TestCase):
     def test_reports_ready_from_python_stopped_and_rust_started_evidence(self) -> None:
@@ -54,6 +58,19 @@ class AuditServiceCutoverTests(unittest.TestCase):
             [python_binary, "-m", "codex_obsidian_sync.cli", "--config", "/tmp/config.toml", "service-run"],
         )
         self.assertEqual(report["snapshots"]["pre"]["program_arguments_count"], 6)
+
+    def test_refuses_symlinked_output_report_path(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            output_target = root / "target-report.json"
+            output = root / "service-cutover-audit.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            with self.assertRaisesRegex(RuntimeError, "output path is a symlink"):
+                audit_service_cutover.resolve_output_path(output)
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
 
     def test_fails_when_stopped_snapshot_is_still_loaded(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:

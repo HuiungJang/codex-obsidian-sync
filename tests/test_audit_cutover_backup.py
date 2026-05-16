@@ -8,6 +8,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import audit_cutover_backup
+
 
 class AuditCutoverBackupTests(unittest.TestCase):
     def test_reports_ready_for_intact_backup_manifest(self) -> None:
@@ -30,6 +34,19 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report["ok"], report["no_go_reasons"])
         self.assertEqual(report["no_go_reasons"], [])
+
+    def test_refuses_symlinked_output_report_path(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            root = Path(temp_dir)
+            output_target = root / "target-report.json"
+            output = root / "backup-audit.json"
+            output_target.write_text("keep\n", encoding="utf-8")
+            output.symlink_to(output_target)
+
+            with self.assertRaisesRegex(RuntimeError, "output path is a symlink"):
+                audit_cutover_backup.resolve_output_path(output)
+
+            self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
 
     def test_allows_live_capture_stderr_files(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:

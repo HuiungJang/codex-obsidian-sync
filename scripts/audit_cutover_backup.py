@@ -31,11 +31,21 @@ def main() -> int:
     args = parser.parse_args()
 
     result = audit_backup_dir(args.backup_dir)
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        write_json(args.output, result)
+    output = resolve_output_path(args.output)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        write_json(output, result)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0 if result["ok"] else 1
+
+
+def resolve_output_path(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    output = path.expanduser()
+    if output.is_symlink():
+        raise RuntimeError(f"output path is a symlink: {output}")
+    return output
 
 
 def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
