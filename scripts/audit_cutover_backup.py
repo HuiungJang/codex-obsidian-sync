@@ -39,13 +39,16 @@ def main() -> int:
 
 
 def audit_backup_dir(backup_dir: Path) -> dict[str, Any]:
-    root = backup_dir.expanduser().resolve()
+    requested_root = backup_dir.expanduser()
+    root = requested_root.resolve()
     manifest_path = root / "backup-manifest.json"
     no_go_reasons: list[str] = []
     file_results: list[dict[str, Any]] = []
     manifest: dict[str, Any] | None = None
 
-    if not root.is_dir():
+    if requested_root.is_symlink():
+        no_go_reasons.append(f"backup directory is a symlink: {requested_root}")
+    elif not root.is_dir():
         no_go_reasons.append(f"backup directory is missing: {root}")
     else:
         marker = root / MARKER

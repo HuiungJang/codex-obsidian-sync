@@ -328,6 +328,36 @@ class AuditCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("monitor directory marker is a symlink", report["no_go_reasons"])
 
+    def test_fails_when_monitor_directory_is_symlink(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            target = root / "target"
+            monitor_dir = root / "monitor-link"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            target.mkdir()
+            write_marker(target)
+            write_records(target, expected_binary=expected_binary)
+            monitor_dir.symlink_to(target, target_is_directory=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_monitor.py",
+                    "--monitor-dir",
+                    str(monitor_dir),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("monitor directory is a symlink: " + str(monitor_dir), report["no_go_reasons"])
+
 
 def write_marker(root: Path) -> None:
     (root / ".codex-obsidian-sync-cutover-monitor").write_text(

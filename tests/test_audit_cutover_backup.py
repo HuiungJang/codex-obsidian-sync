@@ -145,6 +145,30 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("backup file path is outside backup directory: sync-state.json", report["no_go_reasons"])
 
+    def test_fails_when_backup_directory_is_symlink(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            root = Path(temp_dir)
+            backup_dir = create_backup(root)
+            symlink_dir = root / "backup-link"
+            symlink_dir.symlink_to(backup_dir, target_is_directory=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(symlink_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("backup directory is a symlink: " + str(symlink_dir), report["no_go_reasons"])
+
 
 def create_backup(root: Path) -> Path:
     state = root / "sync-state-source.json"

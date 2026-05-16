@@ -57,14 +57,17 @@ def audit_monitor_dir(
     expected_label: str = DEFAULT_LABEL,
     expected_program_arg0: str | None = None,
 ) -> dict[str, Any]:
-    root = monitor_dir.expanduser().resolve()
+    requested_root = monitor_dir.expanduser()
+    root = requested_root.resolve()
     no_go_reasons: list[str] = []
     records: list[dict[str, Any]] = []
     record_summaries: list[dict[str, Any]] = []
     extra_record_names: list[str] = []
     unexpected_entry_names: list[str] = []
 
-    if not root.is_dir():
+    if requested_root.is_symlink():
+        no_go_reasons.append(f"monitor directory is a symlink: {requested_root}")
+    elif not root.is_dir():
         no_go_reasons.append(f"monitor directory is missing: {root}")
     else:
         marker = root / MARKER
