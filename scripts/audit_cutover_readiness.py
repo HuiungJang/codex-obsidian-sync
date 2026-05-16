@@ -520,10 +520,10 @@ def audit_homebrew_smoke_summary(
             "test": ("test", FORMULA_NAME),
             "uninstall": ("uninstall", "--formula", FORMULA_NAME),
         }
-        if not has_successful_command_with_next_arg(commands, ("install", "--formula"), formula_value):
+        if not has_successful_brew_command_with_next_arg(commands, ("install", "--formula"), formula_value):
             reasons.append("Homebrew smoke did not record successful brew install for recorded formula")
         for label, sequence in required_commands.items():
-            if not has_successful_command(commands, sequence):
+            if not has_successful_brew_command(commands, sequence):
                 reasons.append(f"Homebrew smoke did not record successful brew {label}")
         required_binary_commands = {
             "version": ("--version",),
@@ -870,16 +870,21 @@ def command_has_sequence(command: Any, sequence: tuple[str, ...]) -> bool:
     return any(tuple(parts[index : index + width]) == sequence for index in range(0, len(parts) - width + 1))
 
 
-def has_successful_command(commands: list[Any], sequence: tuple[str, ...]) -> bool:
+def has_successful_brew_command(commands: list[Any], sequence: tuple[str, ...]) -> bool:
     for command in commands:
-        if not isinstance(command, dict):
+        if not isinstance(command, dict) or command.get("returncode") != 0:
             continue
-        if command.get("returncode") == 0 and command_has_sequence(command.get("command"), sequence):
+        command_value = command.get("command")
+        if not isinstance(command_value, list):
+            continue
+        parts = [str(part) for part in command_value]
+        width = len(sequence)
+        if parts[:1] == ["brew"] and tuple(parts[1 : 1 + width]) == sequence:
             return True
     return False
 
 
-def has_successful_command_with_next_arg(commands: list[Any], sequence: tuple[str, ...], expected_arg: Any) -> bool:
+def has_successful_brew_command_with_next_arg(commands: list[Any], sequence: tuple[str, ...], expected_arg: Any) -> bool:
     if not isinstance(expected_arg, str) or not expected_arg:
         return False
     for command in commands:
@@ -890,9 +895,13 @@ def has_successful_command_with_next_arg(commands: list[Any], sequence: tuple[st
             continue
         parts = [str(part) for part in command_value]
         width = len(sequence)
-        for index in range(0, len(parts) - width):
-            if tuple(parts[index : index + width]) == sequence and parts[index + width] == expected_arg:
-                return True
+        if (
+            len(parts) > 1 + width
+            and parts[:1] == ["brew"]
+            and tuple(parts[1 : 1 + width]) == sequence
+            and parts[1 + width] == expected_arg
+        ):
+            return True
     return False
 
 

@@ -954,6 +954,45 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_homebrew_smoke_install_command_is_not_brew(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula, brew_command="not-brew")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke did not record successful brew install for recorded formula",
+            report["no_go_reasons"],
+        )
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke did not record successful brew test",
+            report["no_go_reasons"],
+        )
+        self.assertIn(
+            "homebrew smoke summary: Homebrew smoke did not record successful brew uninstall",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_homebrew_smoke_installed_binary_is_relative(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -1352,6 +1391,7 @@ def write_homebrew_smoke_summary(
     install_formula: str | None = None,
     command_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
     installed_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+    brew_command: str = "brew",
 ) -> None:
     formula_path = str(formula.resolve())
     install_formula_path = install_formula or formula_path
@@ -1371,9 +1411,9 @@ def write_homebrew_smoke_summary(
                 "vault_unchanged": vault_unchanged,
                 "note_files": 1,
                 "commands": [
-                    {"command": ["brew", "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
-                    {"command": ["brew", "install", "--formula", install_formula_path], "returncode": 0},
-                    {"command": ["brew", "--prefix", "codex-obsidian-sync"], "returncode": 0},
+                    {"command": [brew_command, "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
+                    {"command": [brew_command, "install", "--formula", install_formula_path], "returncode": 0},
+                    {"command": [brew_command, "--prefix", "codex-obsidian-sync"], "returncode": 0},
                     {
                         "command": [command_binary, "--version"],
                         "returncode": 0,
@@ -1400,12 +1440,12 @@ def write_homebrew_smoke_summary(
                         ],
                         "returncode": 0,
                     },
-                    {"command": ["brew", "test", "codex-obsidian-sync"], "returncode": 0},
+                    {"command": [brew_command, "test", "codex-obsidian-sync"], "returncode": 0},
                     {
-                        "command": ["brew", "uninstall", "--formula", "codex-obsidian-sync"],
+                        "command": [brew_command, "uninstall", "--formula", "codex-obsidian-sync"],
                         "returncode": uninstall_returncode,
                     },
-                    {"command": ["brew", "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
+                    {"command": [brew_command, "list", "--formula", "codex-obsidian-sync"], "returncode": 1},
                 ],
             }
         )
