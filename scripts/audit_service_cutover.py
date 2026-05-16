@@ -145,14 +145,26 @@ def validate_loaded_snapshot(
     reasons: list[str] = []
     program_arguments = validated_program_arguments(plist.get("ProgramArguments"), name, reasons)
     plist_label = plist.get("Label")
-    if not status.get("configured"):
-        reasons.append(f"{name}: status reports configured=false")
+    validate_status_flag(
+        status,
+        "configured",
+        True,
+        reasons,
+        bool_mismatch_reason=f"{name}: status reports configured=false",
+        type_mismatch_reason=f"{name}: status configured is not boolean true",
+    )
     if status.get("launchd_label") != expected_label:
         reasons.append(f"{name}: status launchd_label does not match expected label")
     if plist_label != expected_label:
         reasons.append(f"{name}: LaunchAgent Label does not match expected label")
-    if not status.get("launchd_loaded"):
-        reasons.append(f"{name}: status reports launchd_loaded=false")
+    validate_status_flag(
+        status,
+        "launchd_loaded",
+        True,
+        reasons,
+        bool_mismatch_reason=f"{name}: status reports launchd_loaded=false",
+        type_mismatch_reason=f"{name}: status launchd_loaded is not boolean true",
+    )
     if not looks_loaded(launchctl):
         reasons.append(f"{name}: launchctl print did not return a loaded service")
     if status.get("last_error") not in (None, "none", "never run"):
@@ -171,25 +183,52 @@ def validate_loaded_snapshot(
 
 def validate_stopped_snapshot(status: dict[str, Any], launchctl: str, *, expected_label: str) -> list[str]:
     reasons: list[str] = []
-    if not status.get("configured"):
-        reasons.append("stopped: status reports configured=false")
+    validate_status_flag(
+        status,
+        "configured",
+        True,
+        reasons,
+        bool_mismatch_reason="stopped: status reports configured=false",
+        type_mismatch_reason="stopped: status configured is not boolean true",
+    )
     if status.get("launchd_label") != expected_label:
         reasons.append("stopped: status launchd_label does not match expected label")
-    if status.get("launchd_loaded"):
-        reasons.append("stopped: status still reports launchd_loaded=true")
+    validate_status_flag(
+        status,
+        "launchd_loaded",
+        False,
+        reasons,
+        bool_mismatch_reason="stopped: status still reports launchd_loaded=true",
+        type_mismatch_reason="stopped: status launchd_loaded is not boolean false",
+    )
     if looks_loaded(launchctl):
         reasons.append("stopped: launchctl print still looks loaded")
     return reasons
+
+
+def validate_status_flag(
+    status: dict[str, Any],
+    field: str,
+    expected: bool,
+    reasons: list[str],
+    *,
+    bool_mismatch_reason: str,
+    type_mismatch_reason: str,
+) -> None:
+    value = status.get(field)
+    if value is expected:
+        return
+    reasons.append(bool_mismatch_reason if isinstance(value, bool) else type_mismatch_reason)
 
 
 def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: str) -> dict[str, Any]:
     raw_program_arguments = plist.get("ProgramArguments")
     program_arguments = raw_program_arguments if isinstance(raw_program_arguments, list) else []
     return {
-        "configured": bool(status.get("configured")),
+        "configured": status.get("configured"),
         "status_launchd_label": status.get("launchd_label"),
         "plist_label": plist.get("Label"),
-        "launchd_loaded": bool(status.get("launchd_loaded")),
+        "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),
         "program_arg0": program_arguments[0] if program_arguments else None,
@@ -201,9 +240,9 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
 
 def stopped_snapshot_summary(status: dict[str, Any], launchctl: str) -> dict[str, Any]:
     return {
-        "configured": bool(status.get("configured")),
+        "configured": status.get("configured"),
         "status_launchd_label": status.get("launchd_label"),
-        "launchd_loaded": bool(status.get("launchd_loaded")),
+        "launchd_loaded": status.get("launchd_loaded"),
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),
         "last_success": status.get("last_success"),

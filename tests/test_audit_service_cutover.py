@@ -138,6 +138,23 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("post: launchctl print did not return a loaded service", report["no_go_reasons"])
 
+    def test_fails_when_post_status_loaded_flag_is_not_boolean(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            status = json.loads(files["post_status"].read_text(encoding="utf-8"))
+            status["launchd_loaded"] = "true"
+            files["post_status"].write_text(json.dumps(status) + "\n", encoding="utf-8")
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: status launchd_loaded is not boolean true", report["no_go_reasons"])
+
     def test_fails_when_post_plist_label_is_unexpected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)

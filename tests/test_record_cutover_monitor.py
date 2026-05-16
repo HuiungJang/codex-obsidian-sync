@@ -336,6 +336,84 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(record["ok"])
         self.assertIn("status launchd_label does not match expected label", record["no_go_reasons"])
 
+    def test_fails_when_status_loaded_flag_is_not_boolean(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0, launchd_loaded="true")
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text("state = running\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertEqual(record["launchd_loaded"], "true")
+        self.assertIn("status launchd_loaded is not boolean true", record["no_go_reasons"])
+
+    def test_fails_when_launchctl_print_reports_unloaded_service(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            launchctl_path = root / "launchctl.txt"
+            expected_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            write_status(status_path, skipped_invalid=0)
+            write_plist(plist_path, expected_binary)
+            launchctl_path.write_text("could not find service\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--launchctl-print-file",
+                    str(launchctl_path),
+                    "--expected-program-arg0",
+                    expected_binary,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            record = json.loads((root / "plus5m.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(record["ok"])
+        self.assertFalse(record["launchctl_loaded"])
+        self.assertIn("launchctl print did not return a loaded service", record["no_go_reasons"])
+
     def test_fails_when_plist_label_is_unexpected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
             root = Path(temp_dir)
@@ -486,6 +564,7 @@ def write_status(
     skipped_invalid: object,
     last_success: str = "2026-05-16T00:05:00+00:00",
     label: str = "com.codex.obsidian-sync",
+    launchd_loaded: object = True,
 ) -> None:
     path.write_text(
         json.dumps(
@@ -495,7 +574,7 @@ def write_status(
                 "vault": "/tmp/vault",
                 "cooldown": "1m (60s)",
                 "launchd_label": label,
-                "launchd_loaded": True,
+                "launchd_loaded": launchd_loaded,
                 "plist_path": "/tmp/agent.plist",
                 "pending": "no",
                 "next_eligible_run": "ready now",

@@ -197,15 +197,32 @@ def build_record(
 
     if checkpoint not in CHECKPOINTS:
         no_go_reasons.append(f"unexpected checkpoint: {checkpoint}")
-    if not status.get("configured"):
-        no_go_reasons.append("status reports configured=false")
+    validate_status_flag(
+        status,
+        "configured",
+        True,
+        no_go_reasons,
+        bool_mismatch_reason="status reports configured=false",
+        type_mismatch_reason="status configured is not boolean true",
+    )
     if status_launchd_label != expected_label:
         no_go_reasons.append("status launchd_label does not match expected label")
     if plist_label != expected_label:
         no_go_reasons.append("LaunchAgent Label does not match expected label")
-    if not allow_unloaded and not status.get("launchd_loaded"):
-        no_go_reasons.append("status reports launchd_loaded=false")
-    if not allow_unloaded and not launchctl:
+    if allow_unloaded:
+        if not isinstance(status.get("launchd_loaded"), bool):
+            no_go_reasons.append("status launchd_loaded is not boolean")
+    else:
+        validate_status_flag(
+            status,
+            "launchd_loaded",
+            True,
+            no_go_reasons,
+            bool_mismatch_reason="status reports launchd_loaded=false",
+            type_mismatch_reason="status launchd_loaded is not boolean true",
+        )
+    launchctl_loaded = looks_loaded(launchctl)
+    if not allow_unloaded and not launchctl_loaded:
         no_go_reasons.append("launchctl print did not return a loaded service")
     if status.get("last_error") not in (None, "none", "never run"):
         no_go_reasons.append(f"last_error is {status.get('last_error')}")
@@ -238,11 +255,11 @@ def build_record(
         "recorded_at": recorded_at,
         "expected_label": expected_label,
         "no_go_reasons": no_go_reasons,
-        "configured": bool(status.get("configured")),
+        "configured": status.get("configured"),
         "status_launchd_label": status_launchd_label,
         "plist_label": plist_label,
-        "launchd_loaded": bool(status.get("launchd_loaded")),
-        "launchctl_loaded": bool(launchctl),
+        "launchd_loaded": status.get("launchd_loaded"),
+        "launchctl_loaded": launchctl_loaded,
         "plist_path": status.get("plist_path"),
         "program_arg0": program_arguments[0] if program_arguments else None,
         "program_arguments_count": len(program_arguments),
@@ -301,6 +318,35 @@ def non_negative_int_value(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return None
+
+
+def validate_status_flag(
+    status: dict[str, Any],
+    field: str,
+    expected: bool,
+    reasons: list[str],
+    *,
+    bool_mismatch_reason: str,
+    type_mismatch_reason: str,
+) -> None:
+    value = status.get(field)
+    if value is expected:
+        return
+    reasons.append(bool_mismatch_reason if isinstance(value, bool) else type_mismatch_reason)
+
+
+def looks_loaded(launchctl: str) -> bool:
+    text = launchctl.strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    unloaded_markers = (
+        "could not find service",
+        "not loaded",
+        "service is not loaded",
+        "no such process",
+    )
+    return not any(marker in lowered for marker in unloaded_markers)
 
 
 def sanitize_checkpoint(value: str) -> str:

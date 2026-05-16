@@ -559,8 +559,12 @@ def collect_status(args: argparse.Namespace) -> tuple[dict[str, Any] | None, dic
         if not isinstance(status, dict):
             reasons.append("status JSON is not an object")
             return None, check("status snapshot", False, details, reasons)
-        details["configured"] = bool(status.get("configured"))
-        details["launchd_loaded"] = bool(status.get("launchd_loaded"))
+        details["configured"] = status.get("configured")
+        details["launchd_loaded"] = status.get("launchd_loaded")
+        if not isinstance(status.get("configured"), bool):
+            reasons.append("status configured is not boolean")
+        if not isinstance(status.get("launchd_loaded"), bool):
+            reasons.append("status launchd_loaded is not boolean")
         return status, check("status snapshot", not reasons, details, reasons)
     except Exception as error:
         reasons.append(str(error))
@@ -605,13 +609,25 @@ def audit_launchagent(
     if status is None:
         reasons.append("status snapshot is unavailable")
     else:
-        details["configured"] = bool(status.get("configured"))
-        details["launchd_loaded"] = bool(status.get("launchd_loaded"))
+        details["configured"] = status.get("configured")
+        details["launchd_loaded"] = status.get("launchd_loaded")
         details["last_error"] = status.get("last_error")
-        if not status.get("configured"):
-            reasons.append("status reports configured=false")
-        if not status.get("launchd_loaded"):
-            reasons.append("status reports launchd_loaded=false")
+        validate_status_flag(
+            status,
+            "configured",
+            True,
+            reasons,
+            bool_mismatch_reason="status reports configured=false",
+            type_mismatch_reason="status configured is not boolean true",
+        )
+        validate_status_flag(
+            status,
+            "launchd_loaded",
+            True,
+            reasons,
+            bool_mismatch_reason="status reports launchd_loaded=false",
+            type_mismatch_reason="status launchd_loaded is not boolean true",
+        )
         if status.get("last_error") not in (None, "none", "never run"):
             reasons.append(f"last_error is {status.get('last_error')}")
 
@@ -715,6 +731,21 @@ def summary_path_name(value: Any) -> str | None:
 
 def positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def validate_status_flag(
+    status: dict[str, Any],
+    field: str,
+    expected: bool,
+    reasons: list[str],
+    *,
+    bool_mismatch_reason: str,
+    type_mismatch_reason: str,
+) -> None:
+    value = status.get(field)
+    if value is expected:
+        return
+    reasons.append(bool_mismatch_reason if isinstance(value, bool) else type_mismatch_reason)
 
 
 def command_has_sequence(command: Any, sequence: tuple[str, ...]) -> bool:
