@@ -113,8 +113,12 @@ def audit_service_cutover(
 
     pre_arg0 = snapshots["pre"]["program_arg0"]
     post_arg0 = snapshots["post"]["program_arg0"]
+    pre_config_path = snapshots["pre"]["config_path"]
+    post_config_path = snapshots["post"]["config_path"]
     if pre_arg0 and post_arg0 and pre_arg0 == post_arg0:
         no_go_reasons.append("pre and post ProgramArguments[0] are identical")
+    if pre_config_path and post_config_path and pre_config_path != post_config_path:
+        no_go_reasons.append("pre and post LaunchAgent --config paths differ")
     if expected_python_program_arg0 == expected_rust_program_arg0:
         no_go_reasons.append("expected Python and Rust binaries must differ")
     if not is_absolute_path(expected_python_program_arg0):
@@ -178,6 +182,7 @@ def validate_loaded_snapshot(
             reasons.append(f"{name}: ProgramArguments[0] does not match expected binary")
         if program_arguments[-1] != "service-run":
             reasons.append(f"{name}: LaunchAgent does not end with service-run")
+        validate_config_argument(program_arguments, name, reasons)
     return reasons
 
 
@@ -232,6 +237,7 @@ def snapshot_summary(status: dict[str, Any], plist: dict[str, Any], launchctl: s
         "launchctl_loaded": looks_loaded(launchctl),
         "plist_path": status.get("plist_path"),
         "program_arg0": program_arguments[0] if program_arguments else None,
+        "config_path": config_argument_path(program_arguments),
         "service_command": program_arguments[-1] if program_arguments else None,
         "last_success": status.get("last_success"),
         "last_error": status.get("last_error"),
@@ -274,6 +280,37 @@ def validated_program_arguments(value: Any, name: str, reasons: list[str]) -> li
         reasons.append(f"{name}: LaunchAgent ProgramArguments contains non-string or empty values")
         return []
     return value
+
+
+def validate_config_argument(program_arguments: list[str], name: str, reasons: list[str]) -> None:
+    config_indexes = [index for index, argument in enumerate(program_arguments) if argument == "--config"]
+    if not config_indexes:
+        reasons.append(f"{name}: LaunchAgent ProgramArguments must include --config before service-run")
+        return
+    if len(config_indexes) > 1:
+        reasons.append(f"{name}: LaunchAgent ProgramArguments contains multiple --config values")
+        return
+
+    config_index = config_indexes[0]
+    service_index = len(program_arguments) - 1
+    if config_index >= service_index - 1:
+        reasons.append(f"{name}: LaunchAgent --config value is missing before service-run")
+        return
+
+    config_path = program_arguments[config_index + 1]
+    if not Path(config_path).is_absolute():
+        reasons.append(f"{name}: LaunchAgent --config path is not absolute")
+
+
+def config_argument_path(program_arguments: list[str]) -> str | None:
+    try:
+        config_index = program_arguments.index("--config")
+    except ValueError:
+        return None
+    value_index = config_index + 1
+    if value_index >= len(program_arguments) - 1:
+        return None
+    return program_arguments[value_index]
 
 
 def is_absolute_path(value: Any) -> bool:

@@ -66,6 +66,69 @@ class AuditServiceCutoverTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("post: ProgramArguments[0] does not match expected binary", report["no_go_reasons"])
 
+    def test_fails_when_post_plist_missing_config_argument(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            write_plist(
+                files["post_plist"],
+                rust_binary,
+                label="com.codex.obsidian-sync",
+                include_config=False,
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "post: LaunchAgent ProgramArguments must include --config before service-run",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_post_config_path_is_relative(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(root, python_binary=python_binary, rust_binary=rust_binary)
+            write_plist(
+                files["post_plist"],
+                rust_binary,
+                label="com.codex.obsidian-sync",
+                config_path="relative-config.toml",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("post: LaunchAgent --config path is not absolute", report["no_go_reasons"])
+
+    def test_fails_when_pre_and_post_config_paths_differ(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
+            root = Path(temp_dir)
+            python_binary = "/Users/test/.local/bin/codex-obsidian-sync"
+            rust_binary = "/opt/homebrew/bin/codex-obsidian-sync"
+            files = write_cutover_files(
+                root,
+                python_binary=python_binary,
+                rust_binary=rust_binary,
+                pre_config_path="/tmp/python-config.toml",
+                post_config_path="/tmp/rust-config.toml",
+            )
+
+            result = run_audit(files, python_binary, rust_binary)
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn("pre and post LaunchAgent --config paths differ", report["no_go_reasons"])
+
     def test_fails_when_expected_rust_binary_is_relative(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-service-cutover-") as temp_dir:
             root = Path(temp_dir)
@@ -290,6 +353,8 @@ def write_cutover_files(
     post_status_label: str = "com.codex.obsidian-sync",
     pre_plist_label: str = "com.codex.obsidian-sync",
     post_plist_label: str = "com.codex.obsidian-sync",
+    pre_config_path: str = "/tmp/config.toml",
+    post_config_path: str = "/tmp/config.toml",
 ) -> dict[str, Path]:
     post_program_arg0 = post_program_arg0 or rust_binary
     files = {
@@ -303,7 +368,7 @@ def write_cutover_files(
         "post_launchctl": root / "post-launchctl.txt",
     }
     write_status(files["pre_status"], launchd_loaded=True, label=pre_status_label)
-    write_plist(files["pre_plist"], python_binary, label=pre_plist_label)
+    write_plist(files["pre_plist"], python_binary, label=pre_plist_label, config_path=pre_config_path)
     files["pre_launchctl"].write_text("state = running\n", encoding="utf-8")
     write_status(files["stopped_status"], launchd_loaded=stopped_loaded, label=stopped_status_label)
     files["stopped_launchctl"].write_text(
@@ -311,7 +376,7 @@ def write_cutover_files(
         encoding="utf-8",
     )
     write_status(files["post_status"], launchd_loaded=True, label=post_status_label)
-    write_plist(files["post_plist"], post_program_arg0, label=post_plist_label)
+    write_plist(files["post_plist"], post_program_arg0, label=post_plist_label, config_path=post_config_path)
     files["post_launchctl"].write_text("state = running\n", encoding="utf-8")
     return files
 
@@ -333,13 +398,19 @@ def write_status(path: Path, *, launchd_loaded: bool, label: str) -> None:
     )
 
 
-def write_plist(path: Path, program_arg0: str, *, label: str, extra_argument: str | None = None) -> None:
-    program_arguments = [
-        program_arg0,
-        "--config",
-        "/tmp/config.toml",
-        "service-run",
-    ]
+def write_plist(
+    path: Path,
+    program_arg0: str,
+    *,
+    label: str,
+    extra_argument: str | None = None,
+    config_path: str = "/tmp/config.toml",
+    include_config: bool = True,
+) -> None:
+    program_arguments = [program_arg0]
+    if include_config:
+        program_arguments.extend(["--config", config_path])
+    program_arguments.append("service-run")
     if extra_argument is not None:
         program_arguments.append(extra_argument)
     path.write_bytes(
