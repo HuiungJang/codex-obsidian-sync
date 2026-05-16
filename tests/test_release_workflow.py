@@ -5,6 +5,15 @@ from pathlib import Path
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_build_job_uses_native_macos_runners_for_each_release_target(self) -> None:
+        workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("runs-on: ${{ matrix.runner }}", workflow)
+        self.assertIn("target: aarch64-apple-darwin", workflow)
+        self.assertIn("runner: macos-15", workflow)
+        self.assertIn("target: x86_64-apple-darwin", workflow)
+        self.assertIn("runner: macos-15-intel", workflow)
+
     def test_publish_job_generates_formula_before_release(self) -> None:
         workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 

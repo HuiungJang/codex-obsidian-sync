@@ -574,6 +574,7 @@ GitHub Release:
 - tag는 `v<Cargo.toml package version>` 형식이어야 한다
 - `aarch64-apple-darwin` artifact와 checksum이 있어야 한다
 - `x86_64-apple-darwin` artifact와 checksum이 있어야 한다
+- release workflow는 `aarch64` artifact를 arm64 macOS runner에서, `x86_64` artifact를 Intel macOS runner에서 실행 smoke 해야 한다
 - release workflow는 checksum 검증 후 `codex-obsidian-sync.rb` Homebrew formula를 생성하고 Ruby 문법 검사를 통과해야 한다
 - release workflow는 GitHub Release publish 후 생성된 formula로 Homebrew install/version/test/uninstall smoke를 통과해야 한다
 - downloaded `.tar.gz`는 같은 directory의 `.sha256`으로 `shasum -a 256 -c`가 통과해야 한다
