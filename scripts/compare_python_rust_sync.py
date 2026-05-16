@@ -53,7 +53,7 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
-    output_dir = args.output_dir.resolve()
+    output_dir = resolve_output_dir(args.output_dir)
     artifacts = output_dir / "artifacts"
     runtime = output_dir / "runtime"
 
@@ -78,6 +78,13 @@ def main() -> int:
 
     ok = synthetic["ok"] and all(item["ok"] for item in negatives) and large["ok"] and (local is None or local["ok"])
     return 0 if ok else 1
+
+
+def resolve_output_dir(path: Path) -> Path:
+    output_dir = path.expanduser()
+    if output_dir.is_symlink():
+        raise RuntimeError(f"Output dir is a symlink: {output_dir}")
+    return output_dir.resolve()
 
 
 def prepare_output_dir(output_dir: Path, *, keep_runtime: bool) -> None:
