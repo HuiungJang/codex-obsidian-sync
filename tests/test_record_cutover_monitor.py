@@ -332,6 +332,34 @@ class RecordCutoverMonitorTests(unittest.TestCase):
         self.assertFalse(record["ok"])
         self.assertIn("LaunchAgent Label does not match expected label", record["no_go_reasons"])
 
+    def test_refuses_symlinked_monitor_marker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-monitor-") as temp_dir:
+            root = Path(temp_dir)
+            (root / ".codex-obsidian-sync-cutover-monitor").symlink_to(root / "marker-target")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/record_cutover_monitor.py",
+                    "--checkpoint",
+                    "+5m",
+                    "--output-dir",
+                    str(root),
+                    "--status-json-file",
+                    str(root / "status.json"),
+                    "--plist-file",
+                    str(root / "agent.plist"),
+                    "--launchctl-print-file",
+                    str(root / "launchctl.txt"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing symlinked monitor directory marker", result.stderr)
+
 
 def write_status(
     path: Path,

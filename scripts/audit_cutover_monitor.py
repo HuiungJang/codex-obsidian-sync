@@ -16,6 +16,14 @@ from record_cutover_monitor import (
 
 
 ORDERED_CHECKPOINTS = ("+5m", "+1h", "+4h", "+24h")
+ALLOWED_NON_RECORD_NAMES = {
+    MARKER,
+    "latest-status.stdout",
+    "latest-status.stderr",
+    "latest-launchagent.plist",
+    "latest-launchctl-print.txt",
+    "latest-launchctl-print.stderr",
+}
 
 
 def main() -> int:
@@ -54,6 +62,7 @@ def audit_monitor_dir(
     records: list[dict[str, Any]] = []
     record_summaries: list[dict[str, Any]] = []
     extra_record_names: list[str] = []
+    unexpected_entry_names: list[str] = []
 
     if not root.is_dir():
         no_go_reasons.append(f"monitor directory is missing: {root}")
@@ -61,12 +70,19 @@ def audit_monitor_dir(
         marker = root / MARKER
         if not marker.is_file():
             no_go_reasons.append("monitor directory marker is missing")
+        elif marker.is_symlink():
+            no_go_reasons.append("monitor directory marker is a symlink")
         elif marker.read_text(encoding="utf-8") != MARKER_CONTENT:
             no_go_reasons.append("monitor directory marker content is not managed by record_cutover_monitor.py")
 
         extra_record_names = find_extra_record_names(root)
         for record_name in extra_record_names:
             no_go_reasons.append(f"unexpected monitor record: {record_name}")
+        unexpected_entry_names = find_unexpected_entry_names(root)
+        for entry_name in unexpected_entry_names:
+            no_go_reasons.append(f"unexpected monitor directory entry: {entry_name}")
+        for symlink_name in find_symlinked_allowed_entry_names(root):
+            no_go_reasons.append(f"monitor directory entry is a symlink: {symlink_name}")
 
         for checkpoint in ORDERED_CHECKPOINTS:
             record_path = root / checkpoint_record_name(checkpoint)
@@ -89,6 +105,7 @@ def audit_monitor_dir(
         "present_checkpoints": [record.get("checkpoint") for record in records],
         "missing_checkpoints": missing_checkpoints,
         "extra_records": extra_record_names,
+        "unexpected_entries": unexpected_entry_names,
         "expected_label": expected_label,
         "expected_program_arg0": expected_program_arg0,
         "records": record_summaries,
@@ -101,9 +118,24 @@ def find_extra_record_names(root: Path) -> list[str]:
     return sorted(path.name for path in root.glob("*.json") if path.name not in expected_names)
 
 
+def find_unexpected_entry_names(root: Path) -> list[str]:
+    expected_record_names = {checkpoint_record_name(checkpoint) for checkpoint in ORDERED_CHECKPOINTS}
+    allowed_names = expected_record_names | ALLOWED_NON_RECORD_NAMES
+    return sorted(path.name for path in root.iterdir() if path.name not in allowed_names and path.suffix != ".json")
+
+
+def find_symlinked_allowed_entry_names(root: Path) -> list[str]:
+    expected_record_names = {checkpoint_record_name(checkpoint) for checkpoint in ORDERED_CHECKPOINTS}
+    allowed_names = expected_record_names | ALLOWED_NON_RECORD_NAMES
+    return sorted(path.name for path in root.iterdir() if path.name in allowed_names and path.is_symlink())
+
+
 def read_record(path: Path, checkpoint: str, no_go_reasons: list[str]) -> dict[str, Any] | None:
     if not path.is_file():
         no_go_reasons.append(f"monitor record is missing for {checkpoint}")
+        return None
+    if path.is_symlink():
+        no_go_reasons.append(f"monitor record is a symlink for {checkpoint}")
         return None
     try:
         value = json.loads(path.read_text(encoding="utf-8"))

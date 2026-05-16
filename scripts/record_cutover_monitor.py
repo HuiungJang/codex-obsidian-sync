@@ -57,18 +57,23 @@ def default_plist_path() -> Path:
 
 
 def prepare_output_dir(path: Path) -> Path:
-    path = path.resolve()
-    validate_output_dir(path)
-    if path.exists() and not path.is_dir():
-        raise RuntimeError(f"Output path is not a directory: {path}")
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.chmod(0o700)
-    marker = path / MARKER
+    requested_path = path.expanduser()
+    if requested_path.exists() and requested_path.is_symlink():
+        raise RuntimeError(f"Output path is a symlink: {requested_path}")
+    resolved_path = requested_path.resolve()
+    validate_output_dir(resolved_path)
+    if resolved_path.exists() and not resolved_path.is_dir():
+        raise RuntimeError(f"Output path is not a directory: {resolved_path}")
+    resolved_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    resolved_path.chmod(0o700)
+    marker = resolved_path / MARKER
+    if marker.is_symlink():
+        raise RuntimeError(f"Refusing symlinked monitor directory marker: {marker}")
     if marker.exists() and marker.read_text(encoding="utf-8") != MARKER_CONTENT:
-        raise RuntimeError(f"Refusing unmanaged monitor directory: {path}")
+        raise RuntimeError(f"Refusing unmanaged monitor directory: {resolved_path}")
     marker.write_text(MARKER_CONTENT, encoding="utf-8")
     marker.chmod(0o600)
-    return path
+    return resolved_path
 
 
 def validate_output_dir(path: Path) -> None:
