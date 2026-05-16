@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import audit_published_release
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -44,17 +49,21 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--x86-64-checksum dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256", workflow)
         self.assertIn("--output dist/codex-obsidian-sync.rb", workflow)
         self.assertIn("ruby -c dist/codex-obsidian-sync.rb", workflow)
-        self.assertIn('gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --prerelease', workflow)
+        self.assertIn('gh release create "${GITHUB_REF_NAME}" \\', workflow)
+        self.assertNotIn('gh release create "${GITHUB_REF_NAME}" dist/*', workflow)
+        for asset_name in audit_published_release.required_asset_names():
+            if asset_name in {"homebrew-smoke-summary.json", "release-evidence-summary.json"}:
+                continue
+            self.assertIn(f"dist/{asset_name}", workflow)
         self.assertIn("touch dist/release-created", workflow)
         self.assertIn("--formula dist/codex-obsidian-sync.rb", workflow)
         self.assertIn("--expected-version \"${GITHUB_REF_NAME}\"", workflow)
         self.assertIn("--output dist/homebrew-smoke-summary.json", workflow)
         self.assertIn("--output dist/release-evidence-summary.json", workflow)
-        self.assertIn("dist/*.smoke-summary.json", workflow)
-        self.assertIn(
-            'gh release upload "${GITHUB_REF_NAME}" dist/*smoke-summary.json dist/release-evidence-summary.json --clobber',
-            workflow,
-        )
+        self.assertIn('gh release upload "${GITHUB_REF_NAME}" \\', workflow)
+        self.assertNotIn('gh release upload "${GITHUB_REF_NAME}" dist/*smoke-summary.json', workflow)
+        self.assertIn("dist/homebrew-smoke-summary.json", workflow)
+        self.assertIn("dist/release-evidence-summary.json", workflow)
         self.assertIn('gh release edit "${GITHUB_REF_NAME}" --prerelease=false --latest', workflow)
         self.assertIn("GITHUB_TOKEN: ${{ github.token }}", workflow)
         self.assertIn("--download-dir \"/tmp/codex-obsidian-sync-published-release-${GITHUB_REF_NAME}\"", workflow)

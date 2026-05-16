@@ -128,7 +128,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --prerelease --title "${GITHUB_REF_NAME}" --notes "Rust binary release ${GITHUB_REF_NAME}"
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256 \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256 \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.smoke-summary.json \
+            dist/codex-obsidian-sync.rb \
+            --verify-tag \
+            --prerelease \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Rust binary release ${GITHUB_REF_NAME}"
           touch dist/release-created
 
       - name: Smoke Homebrew formula
@@ -153,7 +164,14 @@ jobs:
       - name: Publish smoke summaries
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" dist/*smoke-summary.json dist/release-evidence-summary.json --clobber
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.smoke-summary.json \
+            dist/homebrew-smoke-summary.json \
+            dist/release-evidence-summary.json \
+            --clobber
 
       - name: Promote verified release
         env:
