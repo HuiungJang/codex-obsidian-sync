@@ -1,0 +1,220 @@
+name: Release Rust binary
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.target }}"
+
+      - name: Verify release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 --manifest-path rust/Cargo.toml | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} must match Cargo version v${version}" >&2
+            exit 1
+          fi
+
+      - name: Build release binary
+        run: cargo build --release --manifest-path rust/Cargo.toml --target "${{ matrix.target }}"
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="codex-obsidian-sync-${{ matrix.target }}"
+          mkdir -p "dist/${package}"
+          cp "rust/target/${{ matrix.target }}/release/codex-obsidian-sync-rs" "dist/${package}/codex-obsidian-sync"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
+
+      - name: Smoke release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) host_target="aarch64-apple-darwin" ;;
+            x86_64) host_target="x86_64-apple-darwin" ;;
+            *)
+              echo "Skipping smoke test on unsupported runner architecture: $(uname -m)"
+              exit 0
+              ;;
+          esac
+          if [[ "${{ matrix.target }}" != "${host_target}" ]]; then
+            echo "Skipping execution smoke for cross-compiled target ${{ matrix.target }} on ${host_target} runner."
+            exit 0
+          fi
+          version="$(cargo metadata --no-deps --format-version 1 --manifest-path rust/Cargo.toml | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          python3 scripts/smoke_release_artifact.py \
+            --tarball "dist/codex-obsidian-sync-${{ matrix.target }}.tar.gz" \
+            --checksum "dist/codex-obsidian-sync-${{ matrix.target }}.tar.gz.sha256" \
+            --expected-version "${version}" \
+            --work-dir "/tmp/codex-obsidian-sync-release-smoke-${{ matrix.target }}"
+          cp "/tmp/codex-obsidian-sync-release-smoke-${{ matrix.target }}/smoke-summary.json" \
+            "dist/codex-obsidian-sync-${{ matrix.target }}.smoke-summary.json"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-obsidian-sync-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/*.smoke-summary.json
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify artifact checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          for checksum in dist/*.sha256; do
+            (cd dist && shasum -a 256 -c "$(basename "${checksum}")")
+          done
+
+      - name: Generate Homebrew formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_homebrew_formula.py \
+            --version "${GITHUB_REF_NAME}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --aarch64-checksum dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256 \
+            --x86-64-checksum dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256 \
+            --output dist/codex-obsidian-sync.rb
+          ruby -c dist/codex-obsidian-sync.rb
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.tar.gz.sha256 \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.tar.gz.sha256 \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.smoke-summary.json \
+            dist/codex-obsidian-sync.rb \
+            --verify-tag \
+            --prerelease \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Rust binary release ${GITHUB_REF_NAME}"
+          touch dist/release-created
+
+      - name: Smoke Homebrew formula
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -euo pipefail
+          python3 scripts/smoke_homebrew_formula.py \
+            --formula dist/codex-obsidian-sync.rb \
+            --expected-version "${GITHUB_REF_NAME}" \
+            --output dist/homebrew-smoke-summary.json
+
+      - name: Audit release evidence
+        run: |
+          set -euo pipefail
+          python3 scripts/audit_release_evidence.py \
+            --version "${GITHUB_REF_NAME}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-dir dist \
+            --homebrew-formula dist/codex-obsidian-sync.rb \
+            --output dist/release-evidence-summary.json
+
+      - name: Publish smoke summaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" \
+            dist/codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json \
+            dist/codex-obsidian-sync-x86_64-apple-darwin.smoke-summary.json \
+            dist/homebrew-smoke-summary.json \
+            dist/release-evidence-summary.json \
+            --clobber
+
+      - name: Promote verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --prerelease=false --latest
+
+      - name: Audit published release assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            rm -rf "/tmp/codex-obsidian-sync-published-release-${GITHUB_REF_NAME}"
+            if python3 scripts/audit_published_release.py \
+              --version "${GITHUB_REF_NAME}" \
+              --repository "${GITHUB_REPOSITORY}" \
+              --download-dir "/tmp/codex-obsidian-sync-published-release-${GITHUB_REF_NAME}" \
+              --output dist/published-release-audit.json; then
+              exit 0
+            fi
+            if [[ "${attempt}" == "5" ]]; then
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Publish published-release audit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" dist/published-release-audit.json --clobber
+          touch dist/release-complete
+
+      - name: Delete incomplete release on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -f dist/release-created && ! -f dist/release-complete ]]; then
+            gh release delete "${GITHUB_REF_NAME}" --yes || true
+          fi
