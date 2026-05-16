@@ -328,6 +328,7 @@ def audit_homebrew_smoke_summary(
         {
             "ok": summary.get("ok"),
             "summary_expected_version": summary.get("expected_version"),
+            "version": summary.get("version"),
             "installed_after": summary.get("installed_after"),
             "status_configured": summary.get("status_configured"),
             "status_json_parsed": summary.get("status_json_parsed"),
@@ -341,6 +342,8 @@ def audit_homebrew_smoke_summary(
         reasons.append("Homebrew smoke summary ok is not true")
     if summary.get("expected_version") != version:
         reasons.append("Homebrew smoke expected_version does not match release version")
+    if summary.get("version") != f"{FORMULA_NAME} {version}":
+        reasons.append("Homebrew smoke version does not match release version")
     if summary_path_name(summary.get("formula")) != formula_path.name:
         reasons.append("Homebrew smoke formula does not match generated formula")
     if summary.get("installed_after") is not False:
@@ -355,6 +358,7 @@ def audit_homebrew_smoke_summary(
     else:
         required_commands = {
             "install": ("install", "--formula"),
+            "version": ("--version",),
             "test": ("test", FORMULA_NAME),
             "uninstall": ("uninstall", "--formula", FORMULA_NAME),
         }
