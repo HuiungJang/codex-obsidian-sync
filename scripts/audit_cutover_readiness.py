@@ -493,9 +493,12 @@ def collect_status(args: argparse.Namespace) -> tuple[dict[str, Any] | None, dic
     reasons: list[str] = []
     try:
         if args.status_json_file:
-            path = args.status_json_file.expanduser().resolve()
+            path = args.status_json_file.expanduser()
             details["source"] = str(path)
-            status = json.loads(path.read_text(encoding="utf-8"))
+            reject_symlinked_evidence(path)
+            resolved = path.resolve()
+            details["source"] = str(resolved)
+            status = json.loads(resolved.read_text(encoding="utf-8"))
         else:
             command = [args.status_binary]
             if args.config:
@@ -530,9 +533,12 @@ def collect_plist(plist_file: Path | None, status: dict[str, Any] | None) -> tup
     if path is None:
         return None, check("launchagent plist", False, details, ["LaunchAgent plist path was not provided"])
 
-    resolved = path.expanduser().resolve()
-    details["path"] = str(resolved)
+    requested_path = path.expanduser()
+    details["path"] = str(requested_path)
     try:
+        reject_symlinked_evidence(requested_path)
+        resolved = requested_path.resolve()
+        details["path"] = str(resolved)
         plist = plistlib.loads(resolved.read_bytes())
         if not isinstance(plist, dict):
             reasons.append("LaunchAgent plist is not a dictionary")
@@ -646,6 +652,11 @@ def read_json_object(path: Path, reasons: list[str]) -> dict[str, Any] | None:
         reasons.append("summary JSON is not an object")
         return None
     return value
+
+
+def reject_symlinked_evidence(path: Path) -> None:
+    if path.expanduser().is_symlink():
+        raise RuntimeError(f"evidence file is a symlink: {path}")
 
 
 def summary_path_name(value: Any) -> str | None:
