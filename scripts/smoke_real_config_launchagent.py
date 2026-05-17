@@ -29,6 +29,11 @@ def main() -> int:
     parser.add_argument("--keep-work-dir", action="store_true", help="Reuse an existing managed work dir.")
     parser.add_argument("--launchctl", default="launchctl", help="launchctl executable. Defaults to PATH lookup.")
     parser.add_argument(
+        "--codesign",
+        default="codesign",
+        help="codesign executable used to record macOS binary identity. Defaults to PATH lookup.",
+    )
+    parser.add_argument(
         "--label",
         help=f"Temporary LaunchAgent label. Defaults to {LABEL_PREFIX}<pid>.",
     )
@@ -59,6 +64,7 @@ def main() -> int:
         config=args.config.expanduser().resolve(),
         work_dir=work_dir,
         launchctl=args.launchctl,
+        codesign=args.codesign,
         label=args.label or f"{LABEL_PREFIX}{os.getpid()}",
         timeout_seconds=args.timeout_seconds,
         sample_on_timeout=args.sample_on_timeout,
@@ -127,6 +133,7 @@ def run_smoke(
     config: Path,
     work_dir: Path,
     launchctl: str,
+    codesign: str,
     label: str,
     timeout_seconds: float,
     sample_on_timeout: bool,
@@ -145,6 +152,7 @@ def run_smoke(
         "sample_on_timeout": sample_on_timeout,
         "sample_seconds": sample_seconds,
         "trace_read_paths": trace_read_paths,
+        "codesign": inspect_codesign(binary, codesign=codesign),
     }
     if not binary.is_file() or not os.access(binary, os.X_OK):
         no_go_reasons.append("binary is missing or not executable")
@@ -354,6 +362,57 @@ def write_smoke_plist(
         plist["ProgramArguments"].extend(["--trace-read-paths", str(read_trace_path)])
     with plist_path.open("wb") as handle:
         plistlib.dump(plist, handle)
+
+
+def inspect_codesign(binary: Path, *, codesign: str) -> dict[str, Any]:
+    tool = resolve_executable(codesign)
+    if tool is None:
+        return {"checked": False, "reason": f"codesign executable was not found: {codesign}"}
+    if not binary.is_file():
+        return {"checked": False, "reason": "binary is missing"}
+
+    result = subprocess.run(
+        [str(tool), "-dv", "--verbose=4", str(binary)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    details = parse_codesign_output(result.stdout + result.stderr)
+    details.update(
+        {
+            "checked": result.returncode == 0,
+            "returncode": result.returncode,
+            "tool": str(tool),
+        }
+    )
+    if result.returncode != 0:
+        details["reason"] = "codesign inspection failed"
+    return details
+
+
+def parse_codesign_output(output: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "identifier": None,
+        "signature": None,
+        "team_identifier": None,
+        "cdhash": None,
+        "authorities": [],
+    }
+    authorities: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Identifier="):
+            fields["identifier"] = line.removeprefix("Identifier=")
+        elif line.startswith("Signature="):
+            fields["signature"] = line.removeprefix("Signature=")
+        elif line.startswith("TeamIdentifier="):
+            fields["team_identifier"] = line.removeprefix("TeamIdentifier=")
+        elif line.startswith("CDHash="):
+            fields["cdhash"] = line.removeprefix("CDHash=")
+        elif line.startswith("Authority="):
+            authorities.append(line.removeprefix("Authority="))
+    fields["authorities"] = authorities
+    return fields
 
 
 def parse_summary(stdout: str, reasons: list[str]) -> dict[str, Any] | None:
