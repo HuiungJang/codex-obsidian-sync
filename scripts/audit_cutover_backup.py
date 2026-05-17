@@ -156,12 +156,14 @@ def validate_status_sources(root: Path, file_entries: list[dict[str, Any]]) -> l
             backup_name="sync-state.json",
             status=status,
             status_field="state_file",
+            allow_missing_status_field=True,
         )
         + validate_source_path(
             entries_by_name,
             backup_name="launchagent.plist",
             status=status,
             status_field="plist_path",
+            allow_missing_status_field=False,
         )
         + validate_launchagent_config_source(root, status)
     )
@@ -173,20 +175,13 @@ def validate_source_path(
     backup_name: str,
     status: dict[str, Any],
     status_field: str,
+    allow_missing_status_field: bool,
 ) -> list[str]:
     reasons: list[str] = []
-    status_value = status.get(status_field)
-    if not isinstance(status_value, str) or not status_value:
-        reasons.append(f"backup status.json {status_field} is missing")
-        return reasons
-    status_path = Path(status_value).expanduser()
-    if not status_path.is_absolute():
-        reasons.append(f"backup status.json {status_field} is not absolute")
-        return reasons
-
     entry = entries_by_name.get(backup_name)
     if entry is None:
         return reasons
+
     source_value = entry.get("source")
     if not isinstance(source_value, str) or not source_value:
         reasons.append(f"backup file source is missing: {backup_name}")
@@ -194,7 +189,19 @@ def validate_source_path(
     source_path = Path(source_value).expanduser()
     if not source_path.is_absolute():
         reasons.append(f"backup file source is not absolute: {backup_name}")
-    elif source_path.resolve() != status_path.resolve():
+        return reasons
+
+    status_value = status.get(status_field)
+    if not isinstance(status_value, str) or not status_value:
+        if not allow_missing_status_field:
+            reasons.append(f"backup status.json {status_field} is missing")
+        return reasons
+    status_path = Path(status_value).expanduser()
+    if not status_path.is_absolute():
+        reasons.append(f"backup status.json {status_field} is not absolute")
+        return reasons
+
+    if source_path.resolve() != status_path.resolve():
         reasons.append(f"backup file source does not match status {status_field}: {backup_name}")
     return reasons
 

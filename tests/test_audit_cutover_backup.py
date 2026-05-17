@@ -71,6 +71,31 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report["ok"], report["no_go_reasons"])
 
+    def test_allows_legacy_python_status_without_state_file_when_manifest_source_is_present(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            status_path = backup_dir / "status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            del status["state_file"]
+            status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+            update_manifest_file_entry(backup_dir, "status.json")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_backup.py",
+                    "--backup-dir",
+                    str(backup_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report["ok"], report["no_go_reasons"])
+
     def test_fails_when_required_file_checksum_changes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
             backup_dir = create_backup(Path(temp_dir))
@@ -505,6 +530,20 @@ class AuditCutoverBackupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["ok"])
         self.assertIn("backup status.json plist_path is not absolute", report["no_go_reasons"])
+
+    def test_fails_when_captured_status_plist_path_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
+            backup_dir = create_backup(Path(temp_dir))
+            status_path = backup_dir / "status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            del status["plist_path"]
+            status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+            update_manifest_file_entry(backup_dir, "status.json")
+
+            report = audit_cutover_backup.audit_backup_dir(backup_dir)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("backup status.json plist_path is missing", report["no_go_reasons"])
 
     def test_fails_when_captured_status_config_path_is_missing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="codex-obsidian-sync-backup-audit-") as temp_dir:
