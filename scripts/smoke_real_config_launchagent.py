@@ -34,6 +34,10 @@ def main() -> int:
         help="codesign executable used to record macOS binary identity. Defaults to PATH lookup.",
     )
     parser.add_argument(
+        "--expected-signing-identifier",
+        help="Expected macOS codesign identifier. When provided, mismatches fail before LaunchAgent bootstrap.",
+    )
+    parser.add_argument(
         "--label",
         help=f"Temporary LaunchAgent label. Defaults to {LABEL_PREFIX}<pid>.",
     )
@@ -65,6 +69,7 @@ def main() -> int:
         work_dir=work_dir,
         launchctl=args.launchctl,
         codesign=args.codesign,
+        expected_signing_identifier=args.expected_signing_identifier,
         label=args.label or f"{LABEL_PREFIX}{os.getpid()}",
         timeout_seconds=args.timeout_seconds,
         sample_on_timeout=args.sample_on_timeout,
@@ -134,6 +139,7 @@ def run_smoke(
     work_dir: Path,
     launchctl: str,
     codesign: str,
+    expected_signing_identifier: str | None,
     label: str,
     timeout_seconds: float,
     sample_on_timeout: bool,
@@ -153,6 +159,7 @@ def run_smoke(
         "sample_seconds": sample_seconds,
         "trace_read_paths": trace_read_paths,
         "codesign": inspect_codesign(binary, codesign=codesign),
+        "expected_signing_identifier": expected_signing_identifier,
     }
     if not binary.is_file() or not os.access(binary, os.X_OK):
         no_go_reasons.append("binary is missing or not executable")
@@ -166,6 +173,11 @@ def run_smoke(
         no_go_reasons.append("timeout must be positive")
     if sample_seconds <= 0:
         no_go_reasons.append("sample seconds must be positive")
+    validate_expected_signing_identifier(
+        details["codesign"],
+        expected_signing_identifier,
+        no_go_reasons,
+    )
 
     launchctl_path = resolve_executable(launchctl)
     if launchctl_path is None:
@@ -413,6 +425,20 @@ def parse_codesign_output(output: str) -> dict[str, Any]:
             authorities.append(line.removeprefix("Authority="))
     fields["authorities"] = authorities
     return fields
+
+
+def validate_expected_signing_identifier(
+    codesign_details: Any,
+    expected_identifier: str | None,
+    reasons: list[str],
+) -> None:
+    if not expected_identifier:
+        return
+    if not isinstance(codesign_details, dict) or codesign_details.get("checked") is not True:
+        reasons.append("codesign identifier could not be verified")
+        return
+    if codesign_details.get("identifier") != expected_identifier:
+        reasons.append("codesign identifier does not match expected signing identifier")
 
 
 def parse_summary(stdout: str, reasons: list[str]) -> dict[str, Any] | None:

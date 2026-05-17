@@ -195,6 +195,57 @@ class SmokeRealConfigLaunchAgentTests(unittest.TestCase):
         self.assertEqual(report["details"]["codesign"]["team_identifier"], "not set")
         self.assertEqual(report["details"]["codesign"]["cdhash"], "abc123")
 
+    def test_rejects_unexpected_codesign_identifier_before_bootstrap(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            binary = write_fake_binary(root)
+            launchctl = write_fake_launchctl(root)
+            codesign = write_fake_codesign(root, identifier="codex_obsidian_sync_rs-random")
+            config = root / "config.toml"
+            config.write_text("vault = \"/tmp/example\"\n", encoding="utf-8")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-real-launchagent-smoke-{root.name}"
+            self.addCleanup(shutil.rmtree, work_dir, ignore_errors=True)
+            label = f"{smoke_real_config_launchagent.LABEL_PREFIX}{root.name.replace('_', '-')}"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_real_config_launchagent.py",
+                    "--binary",
+                    str(binary),
+                    "--config",
+                    str(config),
+                    "--launchctl",
+                    str(launchctl),
+                    "--codesign",
+                    str(codesign),
+                    "--expected-signing-identifier",
+                    "com.codex.obsidian-sync",
+                    "--work-dir",
+                    str(work_dir),
+                    "--label",
+                    label,
+                    "--timeout-seconds",
+                    "5",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+            launchctl_log_exists = (root / "launchctl.log").exists()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["details"]["command_count"], 0)
+        self.assertEqual(report["details"]["expected_signing_identifier"], "com.codex.obsidian-sync")
+        self.assertEqual(report["details"]["codesign"]["identifier"], "codex_obsidian_sync_rs-random")
+        self.assertIn(
+            "codesign identifier does not match expected signing identifier",
+            report["no_go_reasons"],
+        )
+        self.assertFalse(launchctl_log_exists)
+
     def test_records_sample_excerpt_on_timeout_when_requested(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
             root = Path(temp_dir)
