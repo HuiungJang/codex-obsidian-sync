@@ -56,7 +56,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             if asset_name in {"homebrew-smoke-summary.json", "release-evidence-summary.json"}:
                 continue
             self.assertIn(f"dist/{asset_name}", workflow)
-        self.assertIn("touch dist/release-created", workflow)
+        self.assertIn("touch .release-created", workflow)
         self.assertIn("--formula dist/codex-obsidian-sync.rb", workflow)
         self.assertIn("--expected-version \"${GITHUB_REF_NAME}\"", workflow)
         self.assertIn("--output dist/homebrew-smoke-summary.json", workflow)
@@ -70,9 +70,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--download-dir \"/tmp/codex-obsidian-sync-published-release-${GITHUB_REF_NAME}\"", workflow)
         self.assertIn("--output dist/published-release-audit.json", workflow)
         self.assertIn('gh release upload "${GITHUB_REF_NAME}" dist/published-release-audit.json --clobber', workflow)
-        self.assertIn("touch dist/release-complete", workflow)
+        self.assertIn("touch .release-complete", workflow)
         self.assertIn("if: failure()", workflow)
-        self.assertIn("[[ -f dist/release-created && ! -f dist/release-complete ]]", workflow)
+        self.assertIn("[[ -f .release-created && ! -f .release-complete ]]", workflow)
         self.assertIn('gh release delete "${GITHUB_REF_NAME}" --yes || true', workflow)
 
 
