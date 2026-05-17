@@ -88,6 +88,11 @@ def main() -> int:
         action="store_true",
         help="Remove the installed Rust binary dry-run output directory after the smoke check.",
     )
+    parser.add_argument(
+        "--real-launchagent-dry-run-summary",
+        type=Path,
+        help="Summary from smoke_real_config_launchagent.py for a real-config temporary LaunchAgent dry-run.",
+    )
     parser.add_argument("--output", type=Path, help="Write the readiness report to this path.")
     args = parser.parse_args()
 
@@ -121,6 +126,11 @@ def main() -> int:
             args.installed_smoke_codex_home,
             args.installed_smoke_output_dir,
             cleanup_output=args.cleanup_installed_smoke_output,
+        ),
+        audit_real_launchagent_dry_run_summary(
+            args.real_launchagent_dry_run_summary,
+            args.installed_rust_binary,
+            args.installed_smoke_config or args.config,
         ),
         audit_rollback_binary(args.rollback_binary, args.expected_rust_binary),
         status_check,
@@ -857,6 +867,80 @@ def audit_installed_rust_binary_smoke(
             cleanup_installed_smoke_output_dir(output, details, reasons)
 
     return check("installed Rust binary smoke", not reasons, details, reasons)
+
+
+def audit_real_launchagent_dry_run_summary(
+    summary_path: Path | None,
+    expected_binary: str | None,
+    expected_config: Path | None,
+) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "path": str(summary_path.expanduser()) if summary_path else None,
+        "expected_binary": expected_binary,
+        "expected_config": str(expected_config.expanduser()) if expected_config else None,
+        "skipped": summary_path is None,
+    }
+    reasons: list[str] = []
+    if summary_path is None:
+        return check("real LaunchAgent dry-run smoke summary", True, details, reasons)
+
+    path = summary_path.expanduser()
+    if path.is_symlink():
+        reasons.append("summary path is a symlink")
+        return check("real LaunchAgent dry-run smoke summary", False, details, reasons)
+    summary = read_json_object(path, reasons)
+    if summary is None:
+        return check("real LaunchAgent dry-run smoke summary", False, details, reasons)
+
+    details["generated_at"] = summary.get("generated_at")
+    summary_reasons = summary.get("no_go_reasons")
+    details["summary_no_go_reasons"] = summary_reasons
+    if summary.get("ok") is not True:
+        reasons.append("summary ok is not true")
+    if summary_reasons not in ([], None):
+        reasons.append("summary contains no-go reasons")
+
+    smoke_details = summary.get("details")
+    if not isinstance(smoke_details, dict):
+        reasons.append("summary details is not an object")
+        return check("real LaunchAgent dry-run smoke summary", False, details, reasons)
+
+    details.update(
+        {
+            "binary": smoke_details.get("binary"),
+            "config": smoke_details.get("config"),
+            "label": smoke_details.get("label"),
+            "dry_run": smoke_details.get("dry_run"),
+            "processed": smoke_details.get("processed"),
+            "note_files": smoke_details.get("note_files"),
+            "temp_state_exists": smoke_details.get("temp_state_exists"),
+            "stdout_parseable_json": smoke_details.get("stdout_parseable_json"),
+            "loaded_after_bootout": smoke_details.get("loaded_after_bootout"),
+            "dry_run_output_exists_after_cleanup": smoke_details.get("dry_run_output_exists_after_cleanup"),
+        }
+    )
+
+    if expected_binary and not summary_path_matches(smoke_details.get("binary"), Path(expected_binary)):
+        reasons.append("summary binary does not match installed Rust binary")
+    if expected_config and not summary_path_matches(smoke_details.get("config"), expected_config):
+        reasons.append("summary config does not match installed smoke config")
+    label = smoke_details.get("label")
+    if not isinstance(label, str) or not label.startswith("com.codex.obsidian-sync.real-dry-run-smoke."):
+        reasons.append("summary label is not an isolated real dry-run smoke label")
+    if smoke_details.get("stdout_parseable_json") is not True:
+        reasons.append("summary did not prove parseable stdout JSON")
+    if smoke_details.get("dry_run") is not True:
+        reasons.append("summary did not prove dry_run=true")
+    if not positive_int(smoke_details.get("note_files")):
+        reasons.append("summary did not prove dry-run note output")
+    if smoke_details.get("temp_state_exists") is not True:
+        reasons.append("summary did not prove temp sync-state.json")
+    if smoke_details.get("loaded_after_bootout") is not False:
+        reasons.append("summary did not prove temporary LaunchAgent bootout")
+    if smoke_details.get("dry_run_output_exists_after_cleanup") is not False:
+        reasons.append("summary did not prove dry-run output cleanup")
+
+    return check("real LaunchAgent dry-run smoke summary", not reasons, details, reasons)
 
 
 def resolve_installed_smoke_config(path: Path | None, reasons: list[str]) -> Path | None:

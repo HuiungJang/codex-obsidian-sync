@@ -154,6 +154,7 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
             status_path = root / "status.json"
             plist_path = root / "agent.plist"
+            real_launchagent_summary = root / "real-launchagent-summary.json"
             config_path = root / "config.toml"
             codex_home = root / ".codex"
             vault = root / "vault"
@@ -167,6 +168,7 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             write_homebrew_smoke_summary(release_dir, formula)
             write_status(status_path, plist_path)
             write_plist(plist_path, str(rollback_binary))
+            write_real_launchagent_smoke_summary(real_launchagent_summary, installed_binary, config_path)
 
             result = subprocess.run(
                 [
@@ -187,6 +189,8 @@ class AuditCutoverReadinessTests(unittest.TestCase):
                     "--installed-smoke-output-dir",
                     str(installed_output),
                     "--cleanup-installed-smoke-output",
+                    "--real-launchagent-dry-run-summary",
+                    str(real_launchagent_summary),
                     "--rollback-binary",
                     str(rollback_binary),
                     "--status-json-file",
@@ -207,7 +211,89 @@ class AuditCutoverReadinessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(report["ok"], report["no_go_reasons"])
         self.assertCheckOk(report, "installed Rust binary smoke")
+        self.assertCheckOk(report, "real LaunchAgent dry-run smoke summary")
         self.assertFalse(installed_output.exists())
+
+    def test_real_launchagent_smoke_summary_failure_blocks_readiness(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            installed_binary = write_fake_installed_binary(root / "installed" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            real_launchagent_summary = root / "real-launchagent-summary.json"
+            config_path = root / "config.toml"
+            codex_home = root / ".codex"
+            vault = root / "vault"
+            installed_output = Path("/tmp") / f"codex-obsidian-sync-installed-smoke-{os.getpid()}-{root.name}"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            codex_home.mkdir()
+            write_installed_smoke_config(config_path, codex_home, vault)
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary))
+            write_real_launchagent_smoke_summary(
+                real_launchagent_summary,
+                installed_binary,
+                config_path,
+                ok=False,
+                no_go_reasons=["sync-once dry-run timed out"],
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "v0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--installed-rust-binary",
+                    str(installed_binary),
+                    "--installed-smoke-config",
+                    str(config_path),
+                    "--installed-smoke-output-dir",
+                    str(installed_output),
+                    "--cleanup-installed-smoke-output",
+                    "--real-launchagent-dry-run-summary",
+                    str(real_launchagent_summary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "real LaunchAgent dry-run smoke summary: summary ok is not true",
+            report["no_go_reasons"],
+        )
+        self.assertIn(
+            "real LaunchAgent dry-run smoke summary: summary contains no-go reasons",
+            report["no_go_reasons"],
+        )
 
     def test_installed_rust_binary_smoke_fails_when_vault_codex_path_is_not_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
@@ -1834,6 +1920,39 @@ def write_installed_smoke_config(path: Path, codex_home: Path, vault: Path) -> N
                 "",
             ]
         ),
+        encoding="utf-8",
+    )
+
+
+def write_real_launchagent_smoke_summary(
+    path: Path,
+    binary: Path,
+    config: Path,
+    *,
+    ok: bool = True,
+    no_go_reasons: list[str] | None = None,
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "ok": ok,
+                "generated_at": "2026-05-17T00:00:00+00:00",
+                "details": {
+                    "binary": str(binary),
+                    "config": str(config),
+                    "label": "com.codex.obsidian-sync.real-dry-run-smoke.test",
+                    "dry_run": True,
+                    "processed": 1,
+                    "note_files": 1,
+                    "temp_state_exists": True,
+                    "stdout_parseable_json": True,
+                    "loaded_after_bootout": False,
+                    "dry_run_output_exists_after_cleanup": False,
+                },
+                "no_go_reasons": no_go_reasons or [],
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
