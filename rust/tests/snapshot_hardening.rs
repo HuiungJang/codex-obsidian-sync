@@ -124,6 +124,7 @@ fn run_options() -> SyncRunOptions {
     SyncRunOptions {
         now_utc: OffsetDateTime::parse("2026-04-05T00:00:00Z", &Rfc3339).unwrap(),
         local_offset_override: Some(UtcOffset::UTC),
+        read_trace_path: None,
     }
 }
 

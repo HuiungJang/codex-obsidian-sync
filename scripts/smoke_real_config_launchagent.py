@@ -29,6 +29,15 @@ def main() -> int:
     parser.add_argument("--keep-work-dir", action="store_true", help="Reuse an existing managed work dir.")
     parser.add_argument("--launchctl", default="launchctl", help="launchctl executable. Defaults to PATH lookup.")
     parser.add_argument(
+        "--codesign",
+        default="codesign",
+        help="codesign executable used to record macOS binary identity. Defaults to PATH lookup.",
+    )
+    parser.add_argument(
+        "--expected-signing-identifier",
+        help="Expected macOS codesign identifier. When provided, mismatches fail before LaunchAgent bootstrap.",
+    )
+    parser.add_argument(
         "--label",
         help=f"Temporary LaunchAgent label. Defaults to {LABEL_PREFIX}<pid>.",
     )
@@ -40,6 +49,11 @@ def main() -> int:
     )
     parser.add_argument("--sample", default="sample", help="sample executable. Defaults to PATH lookup.")
     parser.add_argument("--sample-seconds", type=float, default=3.0, help="Seconds to sample on timeout.")
+    parser.add_argument(
+        "--trace-read-paths",
+        action="store_true",
+        help="Ask sync-once to write a dry-run note read trace JSONL file under the work dir.",
+    )
     parser.add_argument(
         "--cleanup-dry-run-output",
         action="store_true",
@@ -54,11 +68,14 @@ def main() -> int:
         config=args.config.expanduser().resolve(),
         work_dir=work_dir,
         launchctl=args.launchctl,
+        codesign=args.codesign,
+        expected_signing_identifier=args.expected_signing_identifier,
         label=args.label or f"{LABEL_PREFIX}{os.getpid()}",
         timeout_seconds=args.timeout_seconds,
         sample_on_timeout=args.sample_on_timeout,
         sample=args.sample,
         sample_seconds=args.sample_seconds,
+        trace_read_paths=args.trace_read_paths,
         cleanup_dry_run_output=args.cleanup_dry_run_output,
     )
     output = resolve_output_path(args.output)
@@ -121,11 +138,14 @@ def run_smoke(
     config: Path,
     work_dir: Path,
     launchctl: str,
+    codesign: str,
+    expected_signing_identifier: str | None,
     label: str,
     timeout_seconds: float,
     sample_on_timeout: bool,
     sample: str,
     sample_seconds: float,
+    trace_read_paths: bool,
     cleanup_dry_run_output: bool,
 ) -> dict[str, Any]:
     no_go_reasons: list[str] = []
@@ -137,6 +157,9 @@ def run_smoke(
         "timeout_seconds": timeout_seconds,
         "sample_on_timeout": sample_on_timeout,
         "sample_seconds": sample_seconds,
+        "trace_read_paths": trace_read_paths,
+        "codesign": inspect_codesign(binary, codesign=codesign),
+        "expected_signing_identifier": expected_signing_identifier,
     }
     if not binary.is_file() or not os.access(binary, os.X_OK):
         no_go_reasons.append("binary is missing or not executable")
@@ -150,6 +173,11 @@ def run_smoke(
         no_go_reasons.append("timeout must be positive")
     if sample_seconds <= 0:
         no_go_reasons.append("sample seconds must be positive")
+    validate_expected_signing_identifier(
+        details["codesign"],
+        expected_signing_identifier,
+        no_go_reasons,
+    )
 
     launchctl_path = resolve_executable(launchctl)
     if launchctl_path is None:
@@ -163,6 +191,7 @@ def run_smoke(
 
     assert launchctl_path is not None
     dry_run_output = work_dir / "dry-run-output"
+    read_trace_path = work_dir / "read-trace.jsonl" if trace_read_paths else None
     stdout_path = work_dir / "stdout.json"
     stderr_path = work_dir / "stderr.log"
     plist_path = work_dir / "agent.plist"
@@ -183,6 +212,7 @@ def run_smoke(
             binary=binary,
             config=config,
             dry_run_output=dry_run_output,
+            read_trace_path=read_trace_path,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             work_dir=work_dir,
@@ -261,6 +291,9 @@ def run_smoke(
             cleanup_error = cleanup_output_dir(dry_run_output, work_dir)
             if cleanup_error:
                 no_go_reasons.append(cleanup_error)
+        read_trace_head = read_trace_excerpt(read_trace_path, from_tail=False) if read_trace_path else []
+        read_trace_tail = read_trace_excerpt(read_trace_path, from_tail=True) if read_trace_path else []
+        timeout_diagnosis_text = timeout_diagnosis(details, read_trace_tail) if timed_out else None
         details.update(
             {
                 "target": target,
@@ -273,6 +306,11 @@ def run_smoke(
                 "launchctl_state_tail": final_launchctl[-1200:],
                 "dry_run_output": str(dry_run_output),
                 "dry_run_output_exists_after_cleanup": dry_run_output.exists(),
+                "read_trace": str(read_trace_path) if read_trace_path else None,
+                "read_trace_exists": read_trace_path.is_file() if read_trace_path else None,
+                "read_trace_head": read_trace_head,
+                "read_trace_tail": read_trace_tail,
+                "timeout_diagnosis": timeout_diagnosis_text,
                 "cleanup_error": cleanup_error,
                 "command_count": len(commands),
                 "loaded_after_bootout": loaded_after_bootout,
@@ -311,6 +349,7 @@ def write_smoke_plist(
     binary: Path,
     config: Path,
     dry_run_output: Path,
+    read_trace_path: Path | None,
     stdout_path: Path,
     stderr_path: Path,
     work_dir: Path,
@@ -331,8 +370,75 @@ def write_smoke_plist(
         "StandardErrorPath": str(stderr_path),
         "WorkingDirectory": str(work_dir),
     }
+    if read_trace_path is not None:
+        plist["ProgramArguments"].extend(["--trace-read-paths", str(read_trace_path)])
     with plist_path.open("wb") as handle:
         plistlib.dump(plist, handle)
+
+
+def inspect_codesign(binary: Path, *, codesign: str) -> dict[str, Any]:
+    tool = resolve_executable(codesign)
+    if tool is None:
+        return {"checked": False, "reason": f"codesign executable was not found: {codesign}"}
+    if not binary.is_file():
+        return {"checked": False, "reason": "binary is missing"}
+
+    result = subprocess.run(
+        [str(tool), "-dv", "--verbose=4", str(binary)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    details = parse_codesign_output(result.stdout + result.stderr)
+    details.update(
+        {
+            "checked": result.returncode == 0,
+            "returncode": result.returncode,
+            "tool": str(tool),
+        }
+    )
+    if result.returncode != 0:
+        details["reason"] = "codesign inspection failed"
+    return details
+
+
+def parse_codesign_output(output: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "identifier": None,
+        "signature": None,
+        "team_identifier": None,
+        "cdhash": None,
+        "authorities": [],
+    }
+    authorities: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Identifier="):
+            fields["identifier"] = line.removeprefix("Identifier=")
+        elif line.startswith("Signature="):
+            fields["signature"] = line.removeprefix("Signature=")
+        elif line.startswith("TeamIdentifier="):
+            fields["team_identifier"] = line.removeprefix("TeamIdentifier=")
+        elif line.startswith("CDHash="):
+            fields["cdhash"] = line.removeprefix("CDHash=")
+        elif line.startswith("Authority="):
+            authorities.append(line.removeprefix("Authority="))
+    fields["authorities"] = authorities
+    return fields
+
+
+def validate_expected_signing_identifier(
+    codesign_details: Any,
+    expected_identifier: str | None,
+    reasons: list[str],
+) -> None:
+    if not expected_identifier:
+        return
+    if not isinstance(codesign_details, dict) or codesign_details.get("checked") is not True:
+        reasons.append("codesign identifier could not be verified")
+        return
+    if codesign_details.get("identifier") != expected_identifier:
+        reasons.append("codesign identifier does not match expected signing identifier")
 
 
 def parse_summary(stdout: str, reasons: list[str]) -> dict[str, Any] | None:
@@ -510,6 +616,38 @@ def read_text_if_exists(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_trace_excerpt(path: Path, *, from_tail: bool, limit: int = 20) -> list[str]:
+    if not path.exists():
+        return []
+    lines = [
+        line
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
+    if from_tail:
+        return lines[-limit:]
+    return lines[:limit]
+
+
+def timeout_diagnosis(details: dict[str, Any], read_trace_tail: list[str]) -> str | None:
+    sample_excerpt = "\n".join(str(line) for line in details.get("sample_excerpt") or [])
+    blocked_on_file_open = "read_to_string" in sample_excerpt and (
+        "\nopen" in sample_excerpt or "__open" in sample_excerpt
+    )
+    if read_trace_tail and blocked_on_file_open:
+        return (
+            "sync-once timed out while opening an existing vault note; on macOS, grant Full Disk "
+            "Access to the binary path recorded in details.binary and rerun this smoke."
+        )
+    if blocked_on_file_open and "DryRunOutput::read_relative" in sample_excerpt:
+        return (
+            "sync-once timed out while opening a dry-run overlay file; on macOS real-config "
+            "LaunchAgent smoke, grant Full Disk Access to the binary path recorded in details.binary. "
+            "When supported, rerun with --trace-read-paths to identify the exact note path."
+        )
+    return None
 
 
 def first_nonempty_line(text: str) -> str:

@@ -910,6 +910,7 @@ def audit_real_launchagent_dry_run_summary(
             "binary": smoke_details.get("binary"),
             "config": smoke_details.get("config"),
             "label": smoke_details.get("label"),
+            "expected_signing_identifier": smoke_details.get("expected_signing_identifier"),
             "dry_run": smoke_details.get("dry_run"),
             "processed": smoke_details.get("processed"),
             "note_files": smoke_details.get("note_files"),
@@ -919,6 +920,16 @@ def audit_real_launchagent_dry_run_summary(
             "dry_run_output_exists_after_cleanup": smoke_details.get("dry_run_output_exists_after_cleanup"),
         }
     )
+    codesign = smoke_details.get("codesign")
+    if isinstance(codesign, dict):
+        details.update(
+            {
+                "codesign_checked": codesign.get("checked"),
+                "codesign_identifier": codesign.get("identifier"),
+                "codesign_signature": codesign.get("signature"),
+                "codesign_team_identifier": codesign.get("team_identifier"),
+            }
+        )
 
     if expected_binary and not summary_path_matches(smoke_details.get("binary"), Path(expected_binary)):
         reasons.append("summary binary does not match installed Rust binary")
@@ -927,6 +938,21 @@ def audit_real_launchagent_dry_run_summary(
     label = smoke_details.get("label")
     if not isinstance(label, str) or not label.startswith("com.codex.obsidian-sync.real-dry-run-smoke."):
         reasons.append("summary label is not an isolated real dry-run smoke label")
+    expected_signing_identifier = smoke_details.get("expected_signing_identifier")
+    if not isinstance(expected_signing_identifier, str) or not expected_signing_identifier:
+        reasons.append("summary expected signing identifier is missing")
+    elif expected_signing_identifier != DEFAULT_LAUNCHD_LABEL:
+        reasons.append("summary expected signing identifier does not match LaunchAgent identifier")
+    if not isinstance(codesign, dict):
+        reasons.append("summary codesign evidence is missing")
+    else:
+        if codesign.get("checked") is not True:
+            reasons.append("summary codesign was not checked")
+        if codesign.get("identifier") != expected_signing_identifier:
+            reasons.append("summary codesign identifier does not match expected signing identifier")
+        signature = codesign.get("signature")
+        if not isinstance(signature, str) or not signature.strip():
+            reasons.append("summary codesign signature is missing")
     if smoke_details.get("stdout_parseable_json") is not True:
         reasons.append("summary did not prove parseable stdout JSON")
     if smoke_details.get("dry_run") is not True:

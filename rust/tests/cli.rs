@@ -58,6 +58,7 @@ Options:
       --state-file <STATE_FILE>                        Sync state file
       --lock-file <LOCK_FILE>                          Sync lock file
       --dry-run-output <DIR>                           Directory for dry-run output
+      --trace-read-paths <FILE>                        Write dry-run note read trace JSONL
       --write                                          Write to the configured vault and state
       --include-subagents                              Include subagent conversations
       --log-level <LOG_LEVEL>                          Log level
@@ -119,8 +120,28 @@ fn sync_once_command_shape_defaults_to_dry_run_contract() {
     };
 
     assert!(args.dry_run_output.is_none());
+    assert!(args.trace_read_paths.is_none());
     assert!(!args.write);
     assert_eq!(args.include_subagents, None);
+}
+
+#[test]
+fn sync_once_parses_trace_read_paths() {
+    let cli = Cli::try_parse_from([
+        BIN,
+        "sync-once",
+        "--trace-read-paths",
+        "/tmp/read-trace.jsonl",
+    ])
+    .unwrap();
+    let CliCommand::SyncOnce(args) = cli.command else {
+        panic!("expected sync-once command");
+    };
+
+    assert_eq!(
+        args.trace_read_paths,
+        Some(PathBuf::from("/tmp/read-trace.jsonl"))
+    );
 }
 
 #[test]

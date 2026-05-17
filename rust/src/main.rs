@@ -17,7 +17,9 @@ use codex_obsidian_sync_rs::service_state::load_service_state;
 use codex_obsidian_sync_rs::status_snapshot::{
     build_status_snapshot, query_launchd_loaded, render_status_snapshot,
 };
-use codex_obsidian_sync_rs::sync::{sync_once_dry_run, sync_once_write};
+use codex_obsidian_sync_rs::sync::{
+    SyncRunOptions, sync_once_dry_run_with_options, sync_once_write,
+};
 use codex_obsidian_sync_rs::writer::validate_vault_root;
 use time::OffsetDateTime;
 use toml::{Table, Value};
@@ -117,12 +119,18 @@ fn run(cli: Cli) -> Result<(), SyncError> {
             let config_data = load_toml_config(cli.config.as_deref())?;
             let config = resolve_sync_config(&config_data, &SyncConfigOverrides::from(&args))?;
             let summary = if args.write {
-                if args.dry_run_output.is_some() {
+                if args.dry_run_output.is_some() || args.trace_read_paths.is_some() {
                     return Err(SyncError::Config);
                 }
                 sync_once_write(&config)?
             } else {
-                sync_once_dry_run(&config, args.dry_run_output.as_deref())?
+                let mut options = SyncRunOptions::new();
+                options.read_trace_path = args
+                    .trace_read_paths
+                    .as_ref()
+                    .map(|path| expand_user_path(path))
+                    .transpose()?;
+                sync_once_dry_run_with_options(&config, args.dry_run_output.as_deref(), options)?
             };
             let content = serde_json::to_string_pretty(&summary).map_err(|_| SyncError::Render)?;
             println!("{content}");

@@ -108,6 +108,144 @@ class SmokeRealConfigLaunchAgentTests(unittest.TestCase):
         self.assertFalse(report["details"]["loaded_after_bootout"])
         self.assertIn("bootout", log)
 
+    def test_passes_read_trace_flag_and_reports_trace_excerpt(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            binary = write_fake_binary(root)
+            launchctl = write_fake_launchctl(root)
+            config = root / "config.toml"
+            config.write_text("vault = \"/tmp/example\"\n", encoding="utf-8")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-real-launchagent-smoke-{root.name}"
+            self.addCleanup(shutil.rmtree, work_dir, ignore_errors=True)
+            label = f"{smoke_real_config_launchagent.LABEL_PREFIX}{root.name.replace('_', '-')}"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_real_config_launchagent.py",
+                    "--binary",
+                    str(binary),
+                    "--config",
+                    str(config),
+                    "--launchctl",
+                    str(launchctl),
+                    "--work-dir",
+                    str(work_dir),
+                    "--label",
+                    label,
+                    "--timeout-seconds",
+                    "5",
+                    "--trace-read-paths",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report["ok"], report["no_go_reasons"])
+        self.assertTrue(report["details"]["trace_read_paths"])
+        self.assertTrue(report["details"]["read_trace_exists"])
+        self.assertEqual(len(report["details"]["read_trace_head"]), 1)
+        self.assertIn('"source": "vault"', report["details"]["read_trace_head"][0])
+        self.assertEqual(report["details"]["read_trace_head"], report["details"]["read_trace_tail"])
+
+    def test_records_codesign_identity_for_smoked_binary(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            binary = write_fake_binary(root)
+            launchctl = write_fake_launchctl(root)
+            codesign = write_fake_codesign(root, identifier="com.codex.obsidian-sync")
+            config = root / "config.toml"
+            config.write_text("vault = \"/tmp/example\"\n", encoding="utf-8")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-real-launchagent-smoke-{root.name}"
+            self.addCleanup(shutil.rmtree, work_dir, ignore_errors=True)
+            label = f"{smoke_real_config_launchagent.LABEL_PREFIX}{root.name.replace('_', '-')}"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_real_config_launchagent.py",
+                    "--binary",
+                    str(binary),
+                    "--config",
+                    str(config),
+                    "--launchctl",
+                    str(launchctl),
+                    "--codesign",
+                    str(codesign),
+                    "--work-dir",
+                    str(work_dir),
+                    "--label",
+                    label,
+                    "--timeout-seconds",
+                    "5",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report["details"]["codesign"]["checked"])
+        self.assertEqual(report["details"]["codesign"]["identifier"], "com.codex.obsidian-sync")
+        self.assertEqual(report["details"]["codesign"]["signature"], "adhoc")
+        self.assertEqual(report["details"]["codesign"]["team_identifier"], "not set")
+        self.assertEqual(report["details"]["codesign"]["cdhash"], "abc123")
+
+    def test_rejects_unexpected_codesign_identifier_before_bootstrap(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            binary = write_fake_binary(root)
+            launchctl = write_fake_launchctl(root)
+            codesign = write_fake_codesign(root, identifier="codex_obsidian_sync_rs-random")
+            config = root / "config.toml"
+            config.write_text("vault = \"/tmp/example\"\n", encoding="utf-8")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-real-launchagent-smoke-{root.name}"
+            self.addCleanup(shutil.rmtree, work_dir, ignore_errors=True)
+            label = f"{smoke_real_config_launchagent.LABEL_PREFIX}{root.name.replace('_', '-')}"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_real_config_launchagent.py",
+                    "--binary",
+                    str(binary),
+                    "--config",
+                    str(config),
+                    "--launchctl",
+                    str(launchctl),
+                    "--codesign",
+                    str(codesign),
+                    "--expected-signing-identifier",
+                    "com.codex.obsidian-sync",
+                    "--work-dir",
+                    str(work_dir),
+                    "--label",
+                    label,
+                    "--timeout-seconds",
+                    "5",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+            launchctl_log_exists = (root / "launchctl.log").exists()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["details"]["command_count"], 0)
+        self.assertEqual(report["details"]["expected_signing_identifier"], "com.codex.obsidian-sync")
+        self.assertEqual(report["details"]["codesign"]["identifier"], "codex_obsidian_sync_rs-random")
+        self.assertIn(
+            "codesign identifier does not match expected signing identifier",
+            report["no_go_reasons"],
+        )
+        self.assertFalse(launchctl_log_exists)
+
     def test_records_sample_excerpt_on_timeout_when_requested(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
             root = Path(temp_dir)
@@ -152,6 +290,40 @@ class SmokeRealConfigLaunchAgentTests(unittest.TestCase):
         self.assertEqual(report["details"]["sample_returncode"], 0)
         self.assertTrue(Path(report["details"]["sample_output"]).is_file())
         self.assertIn("DryRunOutput::read_relative", "\n".join(report["details"]["sample_excerpt"]))
+
+    def test_diagnoses_vault_open_timeout_when_trace_and_sample_match(self) -> None:
+        diagnosis = smoke_real_config_launchagent.timeout_diagnosis(
+            {
+                "sample_excerpt": [
+                    "DryRunOutput::read_relative",
+                    "std::fs::read_to_string",
+                    "open",
+                    "__open",
+                ]
+            },
+            ['{"event":"read_attempt","source":"vault","relative_path":"Codex/Daily/2026-05-14.md"}'],
+        )
+
+        self.assertIsNotNone(diagnosis)
+        self.assertIn("Full Disk Access", diagnosis)
+
+    def test_timeout_diagnosis_requires_trace_evidence(self) -> None:
+        diagnosis = smoke_real_config_launchagent.timeout_diagnosis(
+            {"sample_excerpt": ["std::fs::read_to_string", "open"]},
+            [],
+        )
+
+        self.assertIsNone(diagnosis)
+
+    def test_diagnoses_dry_run_open_timeout_without_trace(self) -> None:
+        diagnosis = smoke_real_config_launchagent.timeout_diagnosis(
+            {"sample_excerpt": ["DryRunOutput::read_relative", "std::fs::read_to_string", "open"]},
+            [],
+        )
+
+        self.assertIsNotNone(diagnosis)
+        self.assertIn("Full Disk Access", diagnosis)
+        self.assertIn("--trace-read-paths", diagnosis)
 
     def test_rejects_real_service_label(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
@@ -209,12 +381,24 @@ import sys
 from pathlib import Path
 
 args = sys.argv[1:]
-if len(args) == 5 and args[0] == "--config" and args[2:4] == ["sync-once", "--dry-run-output"]:
+if len(args) in {5, 7} and args[0] == "--config" and args[2:4] == ["sync-once", "--dry-run-output"]:
     output = Path(args[4])
+    trace = None
+    if len(args) == 7:
+        if args[5] != "--trace-read-paths":
+            print("unexpected trace args: " + " ".join(args), file=sys.stderr)
+            raise SystemExit(2)
+        trace = Path(args[6])
     note = output / "Codex" / "Conversations" / "2026" / "smoke.md"
     note.parent.mkdir(parents=True, exist_ok=True)
     note.write_text("# Smoke\\n", encoding="utf-8")
     (output / "sync-state.json").write_text(json.dumps({"files": {}}) + "\\n", encoding="utf-8")
+    if trace is not None:
+        trace.write_text(json.dumps({
+            "event": "read_attempt",
+            "source": "vault",
+            "relative_path": "Codex/Daily/2026-04-04.md",
+        }) + "\\n", encoding="utf-8")
     print(json.dumps({
         "processed": 1,
         "appended": 0,
@@ -302,6 +486,25 @@ raise SystemExit(2)
     )
     launchctl.chmod(0o755)
     return launchctl
+
+
+def write_fake_codesign(root: Path, *, identifier: str) -> Path:
+    codesign = root / "codesign"
+    codesign.write_text(
+        f"""#!/usr/bin/env python3
+import sys
+
+print("Executable=" + sys.argv[-1], file=sys.stderr)
+print("Identifier={identifier}", file=sys.stderr)
+print("Format=Mach-O thin (arm64)", file=sys.stderr)
+print("CDHash=abc123", file=sys.stderr)
+print("Signature=adhoc", file=sys.stderr)
+print("TeamIdentifier=not set", file=sys.stderr)
+""",
+        encoding="utf-8",
+    )
+    codesign.chmod(0o755)
+    return codesign
 
 
 def write_fake_sample(root: Path) -> Path:

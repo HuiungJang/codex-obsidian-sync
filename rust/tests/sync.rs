@@ -193,6 +193,69 @@ fn dry_run_falls_back_to_full_rebuild_when_incremental_offset_is_stale() {
     assert!(dry_text.contains("offset 복구 응답"));
 }
 
+#[cfg(unix)]
+#[test]
+fn dry_run_non_fast_path_does_not_read_unchanged_historical_daily_notes() {
+    let root = temp_dir("skip-unchanged-index-notes");
+    let config = sync_config(&root, false);
+    let old_id = "019d23a7-9258-7810-93cc-c6833b3483a0";
+    let current_id = "019d23a7-9258-7810-93cc-c6833b3483a1";
+    write_rollout(
+        &config.codex_home,
+        "2026",
+        "01",
+        "23",
+        old_id,
+        &[
+            session_meta(old_id, "2026-01-23T01:00:00Z", json!("vscode")),
+            message_record("2026-01-23T01:00:01Z", "user", None, "오래된 질문"),
+        ],
+    );
+    let current_rollout = write_rollout(
+        &config.codex_home,
+        "2026",
+        "04",
+        "03",
+        current_id,
+        &[
+            session_meta(current_id, "2026-04-03T01:00:00Z", json!("vscode")),
+            message_record("2026-04-03T01:00:01Z", "user", None, "현재 질문"),
+        ],
+    );
+    write_index(
+        &config.codex_home,
+        &[
+            index_entry(old_id, "old", "2026-01-23T01:00:01Z"),
+            index_entry(current_id, "current", "2026-04-03T01:00:01Z"),
+        ],
+    );
+    let first_output = root.join("output-1");
+    sync_once_dry_run_with_options(&config, Some(&first_output), run_options()).unwrap();
+    materialize_output_as_real_state(&config, &first_output);
+
+    let old_daily = config.vault.join("Codex/Daily/2026-01-23.md");
+    fs::remove_file(&old_daily).unwrap();
+    symlink(root.join("outside-old-daily.md"), &old_daily).unwrap();
+    append_jsonl(
+        &current_rollout,
+        &message_record(
+            "2026-04-03T01:00:02Z",
+            "assistant",
+            Some("final_answer"),
+            "현재 응답",
+        ),
+    );
+
+    let second_output = root.join("output-2");
+    let summary =
+        sync_once_dry_run_with_options(&config, Some(&second_output), run_options()).unwrap();
+
+    assert_eq!(summary.processed, 1);
+    assert_eq!(summary.appended, 1);
+    assert!(second_output.join("Codex/Daily/2026-04-03.md").exists());
+    assert!(!second_output.join("Codex/Daily/2026-01-23.md").exists());
+}
+
 #[test]
 fn dry_run_skips_invalid_rollouts_and_cli_still_exits_zero() {
     let root = temp_dir("invalid-skip");
@@ -665,6 +728,32 @@ fn cli_write_rejects_dry_run_output() {
 }
 
 #[test]
+fn cli_write_rejects_trace_read_paths() {
+    let root = temp_dir("write-trace-read-paths");
+    let config = sync_config(&root, false);
+
+    Command::cargo_bin(BIN)
+        .unwrap()
+        .args([
+            "sync-once",
+            "--write",
+            "--vault",
+            config.vault.to_str().unwrap(),
+            "--codex-home",
+            config.codex_home.to_str().unwrap(),
+            "--state-file",
+            config.state_file.to_str().unwrap(),
+            "--lock-file",
+            config.lock_file.to_str().unwrap(),
+            "--trace-read-paths",
+            root.join("read-trace.jsonl").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("config error"));
+}
+
+#[test]
 fn cli_write_outputs_python_shaped_summary() {
     let root = temp_dir("write-summary-shape");
     let config = sync_config(&root, false);
@@ -791,6 +880,7 @@ fn run_options() -> SyncRunOptions {
     SyncRunOptions {
         now_utc: OffsetDateTime::parse("2026-04-05T00:00:00Z", &Rfc3339).unwrap(),
         local_offset_override: Some(UtcOffset::UTC),
+        read_trace_path: None,
     }
 }
 
