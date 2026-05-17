@@ -303,17 +303,34 @@ fn run_sync(
         render_options: &render_options,
         now_utc: options.now_utc,
     };
+    let mut index_updates = IndexNoteUpdates::default();
     for rollout_path in &discovery.candidates {
-        process_rollout(rollout_path, &process_context, &mut state, &mut summary)?;
+        index_updates.extend(process_rollout(
+            rollout_path,
+            &process_context,
+            &mut state,
+            &mut summary,
+        )?);
     }
 
     let active_conversations = included_conversations(&state);
-    write_daily_notes(target, &active_conversations, &mut summary)?;
-    write_project_notes(target, &active_conversations, &mut summary)?;
+    write_daily_notes(
+        target,
+        &active_conversations,
+        &index_updates.daily,
+        &mut summary,
+    )?;
+    write_project_notes(
+        target,
+        &active_conversations,
+        &index_updates.projects,
+        &mut summary,
+    )?;
     clear_stale_index_notes(
         target,
         &previous_conversations,
         &active_conversations,
+        &index_updates,
         &mut summary,
     )?;
     update_runtime_state(
@@ -349,9 +366,14 @@ fn process_rollout(
     context: &ProcessContext<'_>,
     state: &mut SyncState,
     summary: &mut SyncSummary,
-) -> Result<(), SyncError> {
+) -> Result<IndexNoteUpdates, SyncError> {
     let state_key = rollout_path.to_string_lossy().into_owned();
     let previous_entry = state.files.get(&state_key).cloned();
+    let previous_index_paths = previous_entry
+        .as_ref()
+        .and_then(conversation_from_state_entry)
+        .map(|conversation| IndexNoteUpdates::from_conversation(&conversation))
+        .unwrap_or_default();
     let envelope = match load_session_envelope_for_sync(
         rollout_path,
         context.session_index,
@@ -360,18 +382,18 @@ fn process_rollout(
         Ok(Some(envelope)) => envelope,
         Ok(None) => {
             summary.unchanged += 1;
-            return Ok(());
+            return Ok(IndexNoteUpdates::default());
         }
         Err(_) => {
             summary.skipped_invalid += 1;
-            return Ok(());
+            return Ok(IndexNoteUpdates::default());
         }
     };
 
     if envelope.is_subagent && !context.config.include_subagents {
         upsert_skipped_subagent(state, rollout_path, &envelope, previous_entry.as_ref())?;
         summary.skipped_subagents += 1;
-        return Ok(());
+        return Ok(previous_index_paths);
     }
 
     let conversation =
@@ -394,6 +416,7 @@ fn process_rollout(
     let mut wrote_note = false;
     let previous_note_matches = note_exists
         && note_fingerprint_matches(context.target, note_relative, previous_note_fingerprint)?;
+    let mut index_paths_changed = false;
     if note_exists && previous_render_hash == Some(render_hash.as_str()) && previous_note_matches {
         summary.unchanged += 1;
     } else {
@@ -435,6 +458,10 @@ fn process_rollout(
         summary.processed += 1;
     }
 
+    let current_index_paths = IndexNoteUpdates::from_conversation(&conversation);
+    if previous_index_paths != current_index_paths {
+        index_paths_changed = true;
+    }
     upsert_included_conversation(
         state,
         IncludedConversationUpdate {
@@ -452,7 +479,13 @@ fn process_rollout(
             now_utc: context.now_utc,
         },
     )?;
-    Ok(())
+    if wrote_note || index_paths_changed {
+        let mut updates = previous_index_paths;
+        updates.extend(current_index_paths);
+        Ok(updates)
+    } else {
+        Ok(IndexNoteUpdates::default())
+    }
 }
 
 fn load_session_envelope_for_sync(
@@ -739,11 +772,49 @@ fn string_extra(entry: &StateEntry, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct IndexNoteUpdates {
+    daily: BTreeSet<String>,
+    projects: BTreeSet<String>,
+}
+
+impl IndexNoteUpdates {
+    fn from_conversation(conversation: &ConversationNoteRecord) -> Self {
+        let mut updates = Self::default();
+        if !conversation.daily_entries.is_empty() {
+            for entry in &conversation.daily_entries {
+                let date_key = entry.date.trim();
+                if !date_key.is_empty() {
+                    updates.daily.insert(format!("Codex/Daily/{date_key}.md"));
+                }
+            }
+        } else if !conversation.daily_note_path.is_empty() {
+            updates.daily.insert(conversation.daily_note_path.clone());
+        }
+
+        if !conversation.project_note_path.is_empty() {
+            updates
+                .projects
+                .insert(conversation.project_note_path.clone());
+        }
+        updates
+    }
+
+    fn extend(&mut self, other: Self) {
+        self.daily.extend(other.daily);
+        self.projects.extend(other.projects);
+    }
+}
+
 fn write_daily_notes(
     target: &dyn SyncTarget,
     conversations: &[ConversationNoteRecord],
+    paths_to_update: &BTreeSet<String>,
     summary: &mut SyncSummary,
 ) -> Result<(), SyncError> {
+    if paths_to_update.is_empty() {
+        return Ok(());
+    }
     let mut grouped = BTreeMap::<String, Vec<ConversationNoteRecord>>::new();
     for conversation in conversations {
         if !conversation.daily_entries.is_empty() {
@@ -768,6 +839,10 @@ fn write_daily_notes(
     }
 
     for (date_key, items) in grouped.iter_mut() {
+        let relative_path = format!("Codex/Daily/{date_key}.md");
+        if !paths_to_update.contains(&relative_path) {
+            continue;
+        }
         items.sort_by(|left, right| {
             left.time
                 .cmp(&right.time)
@@ -776,7 +851,7 @@ fn write_daily_notes(
         let managed_content = render_daily_managed_section(items);
         write_sectioned_note(
             target,
-            &format!("Codex/Daily/{date_key}.md"),
+            &relative_path,
             &render_daily_note_header(date_key),
             &managed_content,
             summary,
@@ -788,8 +863,12 @@ fn write_daily_notes(
 fn write_project_notes(
     target: &dyn SyncTarget,
     conversations: &[ConversationNoteRecord],
+    paths_to_update: &BTreeSet<String>,
     summary: &mut SyncSummary,
 ) -> Result<(), SyncError> {
+    if paths_to_update.is_empty() {
+        return Ok(());
+    }
     let mut grouped = BTreeMap::<String, Vec<ConversationNoteRecord>>::new();
     for conversation in conversations {
         grouped
@@ -799,6 +878,10 @@ fn write_project_notes(
     }
 
     for (project_slug, items) in grouped.iter_mut() {
+        let relative_path = format!("Codex/Projects/{project_slug}.md");
+        if !paths_to_update.contains(&relative_path) {
+            continue;
+        }
         items.sort_by(|left, right| {
             right
                 .date
@@ -810,13 +893,7 @@ fn write_project_notes(
             continue;
         };
         let managed_content = render_project_managed_section(items);
-        write_sectioned_note(
-            target,
-            &format!("Codex/Projects/{project_slug}.md"),
-            &header,
-            &managed_content,
-            summary,
-        )?;
+        write_sectioned_note(target, &relative_path, &header, &managed_content, summary)?;
     }
     Ok(())
 }
@@ -825,12 +902,16 @@ fn clear_stale_index_notes(
     target: &dyn SyncTarget,
     previous_conversations: &[ConversationNoteRecord],
     active_conversations: &[ConversationNoteRecord],
+    paths_to_update: &IndexNoteUpdates,
     summary: &mut SyncSummary,
 ) -> Result<(), SyncError> {
     let (previous_daily, previous_projects) = index_note_paths(previous_conversations);
     let (active_daily, active_projects) = index_note_paths(active_conversations);
 
     for daily_path in previous_daily.difference(&active_daily) {
+        if !paths_to_update.daily.contains(daily_path) {
+            continue;
+        }
         if !target.exists_relative(daily_path)? {
             continue;
         }
@@ -848,6 +929,9 @@ fn clear_stale_index_notes(
     }
 
     for project_path in previous_projects.difference(&active_projects) {
+        if !paths_to_update.projects.contains(project_path) {
+            continue;
+        }
         if !target.exists_relative(project_path)? {
             continue;
         }
