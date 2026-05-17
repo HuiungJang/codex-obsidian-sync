@@ -220,6 +220,57 @@ class SmokeReleaseArtifactTests(unittest.TestCase):
             finally:
                 remove_path(work_dir)
 
+    def test_records_expected_codesign_identifier(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_release_tarball(root)
+            checksum = write_checksum(tarball)
+            codesign = write_fake_codesign(root, identifier="com.codex.obsidian-sync")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = run_smoke(
+                    tarball=tarball,
+                    checksum=checksum,
+                    work_dir=work_dir,
+                    codesign=codesign,
+                    expected_signing_identifier="com.codex.obsidian-sync",
+                )
+                report = json.loads(result.stdout)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(report["codesign"]["checked"])
+                self.assertEqual(report["codesign"]["identifier"], "com.codex.obsidian-sync")
+                self.assertEqual(report["codesign"]["signature"], "adhoc")
+                self.assertEqual(report["codesign"]["team_identifier"], "not set")
+                self.assertEqual(report["codesign"]["cdhash"], "abc123")
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+    def test_rejects_unexpected_codesign_identifier(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-artifact-") as temp_dir:
+            root = Path(temp_dir)
+            tarball = write_release_tarball(root)
+            checksum = write_checksum(tarball)
+            codesign = write_fake_codesign(root, identifier="codex_obsidian_sync_rs-random")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-release-smoke-{root.name}"
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            try:
+                result = run_smoke(
+                    tarball=tarball,
+                    checksum=checksum,
+                    work_dir=work_dir,
+                    codesign=codesign,
+                    expected_signing_identifier="com.codex.obsidian-sync",
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unexpected codesign identifier", result.stderr)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
 
 def write_release_tarball(root: Path) -> Path:
     source_dir = root / "source" / "codex-obsidian-sync-aarch64-apple-darwin"
@@ -266,6 +317,25 @@ def write_checksum(tarball: Path) -> Path:
     return path
 
 
+def write_fake_codesign(root: Path, *, identifier: str) -> Path:
+    codesign = root / "fake-codesign"
+    codesign.write_text(
+        f"""#!/usr/bin/env python3
+import sys
+
+print("Executable=" + sys.argv[-1], file=sys.stderr)
+print("Identifier={identifier}", file=sys.stderr)
+print("Format=Mach-O thin (arm64)", file=sys.stderr)
+print("CDHash=abc123", file=sys.stderr)
+print("Signature=adhoc", file=sys.stderr)
+print("TeamIdentifier=not set", file=sys.stderr)
+""",
+        encoding="utf-8",
+    )
+    codesign.chmod(0o755)
+    return codesign
+
+
 def remove_path(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink()
@@ -278,20 +348,27 @@ def run_smoke(
     tarball: Path,
     checksum: Path,
     work_dir: Path,
+    codesign: Path | None = None,
+    expected_signing_identifier: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        "scripts/smoke_release_artifact.py",
+        "--tarball",
+        str(tarball),
+        "--checksum",
+        str(checksum),
+        "--expected-version",
+        "0.1.0",
+        "--work-dir",
+        str(work_dir),
+    ]
+    if codesign is not None:
+        command.extend(["--codesign", str(codesign)])
+    if expected_signing_identifier is not None:
+        command.extend(["--expected-signing-identifier", expected_signing_identifier])
     return subprocess.run(
-        [
-            sys.executable,
-            "scripts/smoke_release_artifact.py",
-            "--tarball",
-            str(tarball),
-            "--checksum",
-            str(checksum),
-            "--expected-version",
-            "0.1.0",
-            "--work-dir",
-            str(work_dir),
-        ],
+        command,
         capture_output=True,
         text=True,
         check=False,

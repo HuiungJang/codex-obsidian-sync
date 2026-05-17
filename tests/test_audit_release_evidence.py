@@ -896,6 +896,72 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_fails_when_release_smoke_codesign_evidence_is_missing(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            summary_path = release_dir / "codex-obsidian-sync-aarch64-apple-darwin.smoke-summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            del summary["codesign"]
+            summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke codesign evidence is missing",
+            report["no_go_reasons"],
+        )
+
+    def test_fails_when_release_smoke_codesign_identifier_is_unstable(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            write_release_smoke_summaries(release_dir, codesign_identifier="codex_obsidian_sync_rs-random")
+            write_homebrew_smoke_summary(release_dir, formula)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "release smoke summary:aarch64-apple-darwin: release smoke codesign identifier does not match expected LaunchAgent identifier",
+            report["no_go_reasons"],
+        )
+
     def test_fails_when_release_smoke_summary_contains_no_go_reasons(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             release_dir = Path(temp_dir)
@@ -2188,6 +2254,7 @@ def write_release_smoke_summaries(
     version_command_stdout: str = "codex-obsidian-sync 0.1.0\n",
     command_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
     installed_binary: str = "/tmp/codex-obsidian-sync/bin/codex-obsidian-sync",
+    codesign_identifier: str | None = "com.codex.obsidian-sync",
     tarball_sha256: str | None = None,
     checksum_sha256: str | None = None,
     processed: int = 1,
@@ -2205,6 +2272,13 @@ def write_release_smoke_summaries(
                     "checksum": str(checksum),
                     "checksum_sha256": checksum_sha256 or hashlib.sha256(checksum.read_bytes()).hexdigest(),
                     "installed_binary": installed_binary,
+                    "codesign": {
+                        "checked": True,
+                        "identifier": codesign_identifier,
+                        "signature": "adhoc",
+                        "team_identifier": "not set",
+                        "cdhash": "abc123",
+                    },
                     "version": "codex-obsidian-sync 0.1.0",
                     "status_configured": True,
                     "status_json_parsed": True,

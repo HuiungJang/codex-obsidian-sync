@@ -19,6 +19,21 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("target: x86_64-apple-darwin", workflow)
         self.assertIn("runner: macos-15-intel", workflow)
 
+    def test_build_job_signs_artifacts_with_stable_identifier_before_packaging(self) -> None:
+        workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+
+        build_step = workflow.index("- name: Build release binary")
+        sign_step = workflow.index("- name: Sign release binary")
+        package_step = workflow.index("- name: Package artifact")
+        smoke_step = workflow.index("- name: Smoke release artifact")
+
+        self.assertLess(build_step, sign_step)
+        self.assertLess(sign_step, package_step)
+        self.assertLess(package_step, smoke_step)
+        self.assertIn("codesign --force --sign - --identifier com.codex.obsidian-sync", workflow)
+        self.assertIn("codesign -dv --verbose=4", workflow)
+        self.assertIn("--expected-signing-identifier com.codex.obsidian-sync", workflow)
+
     def test_publish_job_generates_formula_before_release_and_promotes_after_smoke(self) -> None:
         workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 

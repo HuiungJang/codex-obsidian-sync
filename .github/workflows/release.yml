@@ -43,6 +43,14 @@ jobs:
       - name: Build release binary
         run: cargo build --release --manifest-path rust/Cargo.toml --target "${{ matrix.target }}"
 
+      - name: Sign release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="rust/target/${{ matrix.target }}/release/codex-obsidian-sync-rs"
+          codesign --force --sign - --identifier com.codex.obsidian-sync --timestamp=none "${binary}"
+          codesign -dv --verbose=4 "${binary}"
+
       - name: Package artifact
         shell: bash
         run: |
@@ -74,6 +82,7 @@ jobs:
             --tarball "dist/codex-obsidian-sync-${{ matrix.target }}.tar.gz" \
             --checksum "dist/codex-obsidian-sync-${{ matrix.target }}.tar.gz.sha256" \
             --expected-version "${version}" \
+            --expected-signing-identifier com.codex.obsidian-sync \
             --work-dir "/tmp/codex-obsidian-sync-release-smoke-${{ matrix.target }}"
           cp "/tmp/codex-obsidian-sync-release-smoke-${{ matrix.target }}/smoke-summary.json" \
             "dist/codex-obsidian-sync-${{ matrix.target }}.smoke-summary.json"
