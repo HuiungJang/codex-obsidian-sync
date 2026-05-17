@@ -556,6 +556,12 @@ def timeout_diagnosis(details: dict[str, Any], read_trace_tail: list[str]) -> st
             "sync-once timed out while opening an existing vault note; on macOS, grant Full Disk "
             "Access to the binary path recorded in details.binary and rerun this smoke."
         )
+    if blocked_on_file_open and "DryRunOutput::read_relative" in sample_excerpt:
+        return (
+            "sync-once timed out while opening a dry-run overlay file; on macOS real-config "
+            "LaunchAgent smoke, grant Full Disk Access to the binary path recorded in details.binary. "
+            "When supported, rerun with --trace-read-paths to identify the exact note path."
+        )
     return None
 
 

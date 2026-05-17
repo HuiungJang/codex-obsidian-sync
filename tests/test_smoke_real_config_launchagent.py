@@ -220,6 +220,16 @@ class SmokeRealConfigLaunchAgentTests(unittest.TestCase):
 
         self.assertIsNone(diagnosis)
 
+    def test_diagnoses_dry_run_open_timeout_without_trace(self) -> None:
+        diagnosis = smoke_real_config_launchagent.timeout_diagnosis(
+            {"sample_excerpt": ["DryRunOutput::read_relative", "std::fs::read_to_string", "open"]},
+            [],
+        )
+
+        self.assertIsNotNone(diagnosis)
+        self.assertIn("Full Disk Access", diagnosis)
+        self.assertIn("--trace-read-paths", diagnosis)
+
     def test_rejects_real_service_label(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
             root = Path(temp_dir)
