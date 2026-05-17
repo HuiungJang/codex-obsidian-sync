@@ -64,7 +64,7 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             )
             report = json.loads(result.stdout)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(report["ok"], report["no_go_reasons"])
         self.assertEqual(report["tag"], "v0.1.0")
         self.assertEqual(report["no_go_reasons"], [])
@@ -89,6 +89,60 @@ class AuditCutoverReadinessTests(unittest.TestCase):
                 audit_cutover_readiness.resolve_output_path(output)
 
             self.assertEqual(output_target.read_text(encoding="utf-8"), "keep\n")
+
+    def test_relaxed_summary_paths_accepts_downloaded_release_evidence(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "downloaded-release"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            rewrite_summary_paths_as_downloaded_evidence(release_dir)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "v0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--relaxed-summary-paths",
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(report["ok"], report["no_go_reasons"])
+        self.assertCheckOk(report, "release smoke summary:aarch64-apple-darwin")
+        self.assertCheckOk(report, "release smoke summary:x86_64-apple-darwin")
+        self.assertCheckOk(report, "homebrew smoke summary")
 
     def test_fails_when_formula_checksum_does_not_match_release_checksum(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
@@ -1665,6 +1719,32 @@ def write_homebrew_smoke_summary(
         + "\n",
         encoding="utf-8",
     )
+
+
+def rewrite_summary_paths_as_downloaded_evidence(release_dir: Path) -> None:
+    for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
+        summary_path = release_dir / f"codex-obsidian-sync-{target}.smoke-summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["tarball"] = f"/runner/dist/codex-obsidian-sync-{target}.tar.gz"
+        summary["checksum"] = f"/runner/dist/codex-obsidian-sync-{target}.tar.gz.sha256"
+        summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+    homebrew_path = release_dir / "homebrew-smoke-summary.json"
+    summary = json.loads(homebrew_path.read_text(encoding="utf-8"))
+    install_formula = "codex-smoke/codex-obsidian-sync-smoke-test/codex-obsidian-sync"
+    summary["formula"] = "/runner/dist/codex-obsidian-sync.rb"
+    summary["install_formula"] = install_formula
+    summary["install_formula_path"] = "/runner/tap/Formula/codex-obsidian-sync.rb"
+    summary["install_formula_sha256"] = summary["formula_sha256"]
+    for command in summary.get("commands", []):
+        command_value = command.get("command") if isinstance(command, dict) else None
+        if (
+            isinstance(command_value, list)
+            and len(command_value) >= 4
+            and command_value[:3] == ["brew", "install", "--formula"]
+        ):
+            command_value[3] = install_formula
+    homebrew_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
 
 
 def write_status(
