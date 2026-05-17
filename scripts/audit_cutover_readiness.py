@@ -39,6 +39,11 @@ def main() -> int:
     )
     parser.add_argument("--release-dir", type=Path, help="Directory containing release tarballs and .sha256 files.")
     parser.add_argument("--homebrew-formula", type=Path, help="Generated Homebrew formula path.")
+    parser.add_argument(
+        "--relaxed-summary-paths",
+        action="store_true",
+        help="Allow smoke summaries generated on another machine to reference equivalent artifact/formula basenames.",
+    )
     parser.add_argument("--expected-rust-binary", help="Rust binary path expected after cutover.")
     parser.add_argument(
         "--rollback-binary",
@@ -67,6 +72,7 @@ def main() -> int:
     repository = validate_repository(args.repository)
     release_dir = args.release_dir.expanduser() if args.release_dir else None
     formula_path = args.homebrew_formula.expanduser() if args.homebrew_formula else None
+    strict_summary_paths = not args.relaxed_summary_paths
 
     release_checks = audit_release_dir(release_dir)
     checksums = {
@@ -81,8 +87,8 @@ def main() -> int:
         *release_checks,
         audit_release_dir_contents(release_dir, formula_path),
         audit_homebrew_formula(formula_path, version, repository, checksums),
-        *audit_release_smoke_summaries(release_dir, version),
-        audit_homebrew_smoke_summary(release_dir, formula_path, version),
+        *audit_release_smoke_summaries(release_dir, version, strict_summary_paths=strict_summary_paths),
+        audit_homebrew_smoke_summary(release_dir, formula_path, version, strict_summary_paths=strict_summary_paths),
         audit_expected_rust_binary(args.expected_rust_binary, version),
         audit_rollback_binary(args.rollback_binary, args.expected_rust_binary),
         status_check,
