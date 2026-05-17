@@ -144,6 +144,141 @@ class AuditCutoverReadinessTests(unittest.TestCase):
         self.assertCheckOk(report, "release smoke summary:x86_64-apple-darwin")
         self.assertCheckOk(report, "homebrew smoke summary")
 
+    def test_installed_rust_binary_smoke_accepts_real_config_dry_run(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            installed_binary = write_fake_installed_binary(root / "installed" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            config_path = root / "config.toml"
+            codex_home = root / ".codex"
+            installed_output = Path("/tmp") / f"codex-obsidian-sync-installed-smoke-{os.getpid()}-{root.name}"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            codex_home.mkdir()
+            write_installed_smoke_config(config_path, codex_home)
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "v0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--installed-rust-binary",
+                    str(installed_binary),
+                    "--installed-smoke-config",
+                    str(config_path),
+                    "--installed-smoke-output-dir",
+                    str(installed_output),
+                    "--cleanup-installed-smoke-output",
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(report["ok"], report["no_go_reasons"])
+        self.assertCheckOk(report, "installed Rust binary smoke")
+        self.assertFalse(installed_output.exists())
+
+    def test_installed_rust_binary_smoke_fails_when_real_config_dry_run_fails(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            installed_binary = write_fake_installed_binary(
+                root / "installed" / "codex-obsidian-sync",
+                "0.1.0",
+                fail_sync=True,
+            )
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            config_path = root / "config.toml"
+            codex_home = root / ".codex"
+            installed_output = Path("/tmp") / f"codex-obsidian-sync-installed-smoke-{os.getpid()}-{root.name}"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            codex_home.mkdir()
+            write_installed_smoke_config(config_path, codex_home)
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "v0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--installed-rust-binary",
+                    str(installed_binary),
+                    "--installed-smoke-config",
+                    str(config_path),
+                    "--installed-smoke-output-dir",
+                    str(installed_output),
+                    "--cleanup-installed-smoke-output",
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "installed Rust binary smoke: installed sync-once dry-run failed",
+            report["no_go_reasons"],
+        )
+        self.assertFalse(installed_output.exists())
+
     def test_fails_when_formula_checksum_does_not_match_release_checksum(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
             root = Path(temp_dir)
@@ -1573,6 +1708,58 @@ def write_fake_binary(path: Path, version: str) -> Path:
     )
     path.chmod(0o755)
     return path
+
+
+def write_fake_installed_binary(path: Path, version: str, *, fail_sync: bool = False) -> Path:
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f"""#!{sys.executable}
+import json
+import sys
+from pathlib import Path
+
+VERSION = {version!r}
+FAIL_SYNC = {fail_sync!r}
+
+args = sys.argv[1:]
+if args == ["--version"]:
+    print(f"codex-obsidian-sync {{VERSION}}")
+elif len(args) == 4 and args[0] == "--config" and args[2:] == ["status", "--json"]:
+    print(json.dumps({{"configured": True, "launchd_loaded": True}}))
+elif len(args) == 5 and args[0] == "inspect-recent" and args[1] == "--codex-home" and args[3] == "--limit":
+    print(json.dumps([{{"id": "session"}}]))
+elif len(args) == 5 and args[0] == "--config" and args[2:4] == ["sync-once", "--dry-run-output"]:
+    output = Path(args[4])
+    (output / "Codex").mkdir(parents=True, exist_ok=True)
+    (output / "Codex" / "note.md").write_text("# Note\\n", encoding="utf-8")
+    if FAIL_SYNC:
+        print("dry-run output error", file=sys.stderr)
+        raise SystemExit(1)
+    (output / "sync-state.json").write_text(json.dumps({{"files": {{}}}}) + "\\n", encoding="utf-8")
+    print(json.dumps({{"dry_run": True, "processed": 1, "planned_writes": 2, "temp_state_file": str(output / "sync-state.json")}}))
+else:
+    print("unexpected", args, file=sys.stderr)
+    raise SystemExit(1)
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def write_installed_smoke_config(path: Path, codex_home: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                'vault = "/tmp/vault"',
+                f'codex_home = "{codex_home}"',
+                'state_file = "/tmp/state.json"',
+                'lock_file = "/tmp/sync.lock"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def write_release_smoke_summaries(release_dir: Path) -> None:

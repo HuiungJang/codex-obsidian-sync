@@ -64,6 +64,30 @@ def main() -> int:
         default=Path("/tmp/codex-obsidian-sync-cutover-monitor"),
         help="Post-cutover monitor output directory to validate.",
     )
+    parser.add_argument(
+        "--installed-rust-binary",
+        help="Installed Rust binary candidate to smoke against the real cutover config before service cutover.",
+    )
+    parser.add_argument(
+        "--installed-smoke-config",
+        type=Path,
+        help="Config path for the installed Rust binary smoke. Defaults to --config when provided.",
+    )
+    parser.add_argument(
+        "--installed-smoke-codex-home",
+        type=Path,
+        help="Codex home used for installed Rust binary inspect-recent smoke. Defaults to codex_home in config.",
+    )
+    parser.add_argument(
+        "--installed-smoke-output-dir",
+        type=Path,
+        help="Dedicated /tmp/codex-obsidian-sync-* dry-run output directory for installed Rust binary smoke.",
+    )
+    parser.add_argument(
+        "--cleanup-installed-smoke-output",
+        action="store_true",
+        help="Remove the installed Rust binary dry-run output directory after the smoke check.",
+    )
     parser.add_argument("--output", type=Path, help="Write the readiness report to this path.")
     args = parser.parse_args()
 
@@ -90,6 +114,14 @@ def main() -> int:
         *audit_release_smoke_summaries(release_dir, version, strict_summary_paths=strict_summary_paths),
         audit_homebrew_smoke_summary(release_dir, formula_path, version, strict_summary_paths=strict_summary_paths),
         audit_expected_rust_binary(args.expected_rust_binary, version),
+        audit_installed_rust_binary_smoke(
+            args.installed_rust_binary,
+            version,
+            args.installed_smoke_config or args.config,
+            args.installed_smoke_codex_home,
+            args.installed_smoke_output_dir,
+            cleanup_output=args.cleanup_installed_smoke_output,
+        ),
         audit_rollback_binary(args.rollback_binary, args.expected_rust_binary),
         status_check,
         plist_check,
@@ -700,6 +732,242 @@ def audit_expected_rust_binary(binary: str | None, version: str) -> dict[str, An
         elif result.stdout.strip() != f"{FORMULA_NAME} {version}":
             reasons.append("expected Rust binary version does not match release version")
     return check("expected Rust binary", not reasons, details, reasons)
+
+
+def audit_installed_rust_binary_smoke(
+    binary: str | None,
+    version: str,
+    config_path: Path | None,
+    codex_home: Path | None,
+    output_dir: Path | None,
+    *,
+    cleanup_output: bool,
+) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "path": binary,
+        "expected_version": version,
+        "config": str(config_path.expanduser()) if config_path else None,
+        "codex_home": str(codex_home.expanduser()) if codex_home else None,
+        "output_dir": str(output_dir.expanduser()) if output_dir else None,
+        "skipped": binary is None,
+    }
+    reasons: list[str] = []
+    if binary is None:
+        return check("installed Rust binary smoke", True, details, reasons)
+
+    path = resolve_executable(binary)
+    details["path"] = str(path) if path else None
+    if path is None or not is_executable_file(path):
+        reasons.append("installed Rust binary is missing or not executable")
+        return check("installed Rust binary smoke", False, details, reasons)
+
+    config = resolve_installed_smoke_config(config_path, reasons)
+    details["config"] = str(config) if config else None
+    resolved_codex_home = resolve_installed_smoke_codex_home(config, codex_home, reasons)
+    details["codex_home"] = str(resolved_codex_home) if resolved_codex_home else None
+    output = resolve_installed_smoke_output_dir(output_dir, reasons)
+    details["output_dir"] = str(output) if output else None
+    if reasons:
+        return check("installed Rust binary smoke", False, details, reasons)
+
+    assert config is not None
+    assert resolved_codex_home is not None
+    assert output is not None
+    try:
+        version_result = run_capture([str(path), "--version"])
+        details["version_returncode"] = version_result.returncode
+        details["version_output"] = version_result.stdout.strip()
+        if version_result.returncode != 0:
+            reasons.append("installed Rust binary --version failed")
+        elif version_result.stdout.strip() != f"{FORMULA_NAME} {version}":
+            reasons.append("installed Rust binary version does not match release version")
+
+        status_result = run_capture([str(path), "--config", str(config), "status", "--json"])
+        details["status_returncode"] = status_result.returncode
+        status = parse_json_stdout(status_result, "installed status --json", reasons)
+        if status_result.returncode != 0:
+            reasons.append("installed status --json failed")
+        elif not isinstance(status, dict):
+            reasons.append("installed status --json did not return an object")
+        else:
+            details["status_configured"] = status.get("configured")
+            details["status_launchd_loaded"] = status.get("launchd_loaded")
+            if status.get("configured") is not True:
+                reasons.append("installed status --json configured is not true")
+
+        inspect_result = run_capture(
+            [
+                str(path),
+                "inspect-recent",
+                "--codex-home",
+                str(resolved_codex_home),
+                "--limit",
+                "3",
+            ]
+        )
+        details["inspect_returncode"] = inspect_result.returncode
+        inspect = parse_json_stdout(inspect_result, "installed inspect-recent", reasons)
+        if inspect_result.returncode != 0:
+            reasons.append("installed inspect-recent failed")
+        elif not isinstance(inspect, list):
+            reasons.append("installed inspect-recent did not return a list")
+        else:
+            details["inspect_count"] = len(inspect)
+            if not inspect:
+                reasons.append("installed inspect-recent returned no sessions")
+
+        sync_result = run_capture(
+            [
+                str(path),
+                "--config",
+                str(config),
+                "sync-once",
+                "--dry-run-output",
+                str(output),
+            ]
+        )
+        details["sync_returncode"] = sync_result.returncode
+        details["sync_stderr"] = first_nonempty_line(sync_result.stderr)
+        summary = parse_json_stdout(sync_result, "installed sync-once dry-run", reasons)
+        if sync_result.returncode != 0:
+            reasons.append("installed sync-once dry-run failed")
+        elif not isinstance(summary, dict):
+            reasons.append("installed sync-once dry-run did not return an object")
+        else:
+            details["dry_run"] = summary.get("dry_run")
+            details["processed"] = summary.get("processed")
+            details["planned_writes"] = summary.get("planned_writes")
+            details["temp_state_file"] = summary.get("temp_state_file")
+            if summary.get("dry_run") is not True:
+                reasons.append("installed sync-once did not report dry_run=true")
+
+        if output.exists():
+            note_count = len(list(output.rglob("*.md")))
+            details["note_files"] = note_count
+            if note_count <= 0:
+                reasons.append("installed sync-once dry-run produced no note files")
+            temp_state = output / "sync-state.json"
+            details["temp_state_exists"] = temp_state.is_file()
+            if not temp_state.is_file():
+                reasons.append("installed sync-once dry-run did not produce temp sync-state.json")
+    finally:
+        if cleanup_output and output is not None and output.exists():
+            cleanup_installed_smoke_output_dir(output, details, reasons)
+
+    return check("installed Rust binary smoke", not reasons, details, reasons)
+
+
+def resolve_installed_smoke_config(path: Path | None, reasons: list[str]) -> Path | None:
+    if path is None:
+        reasons.append("installed smoke config path was not provided")
+        return None
+    requested = path.expanduser()
+    if requested.is_symlink():
+        reasons.append("installed smoke config path is a symlink")
+        return None
+    resolved = requested.resolve()
+    if not resolved.is_file():
+        reasons.append("installed smoke config path is missing")
+        return None
+    return resolved
+
+
+def resolve_installed_smoke_codex_home(
+    config_path: Path | None,
+    codex_home: Path | None,
+    reasons: list[str],
+) -> Path | None:
+    if codex_home is not None:
+        candidate = codex_home.expanduser()
+    elif config_path is not None:
+        try:
+            with config_path.open("rb") as handle:
+                config = tomllib.load(handle)
+            config_value = config.get("codex_home")
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            reasons.append(f"installed smoke config TOML is invalid: {error}")
+            return None
+        candidate = Path(config_value).expanduser() if isinstance(config_value, str) and config_value else Path.home() / ".codex"
+    else:
+        return None
+
+    if not candidate.is_absolute():
+        reasons.append("installed smoke codex_home is not absolute")
+        return None
+    if candidate.is_symlink():
+        reasons.append("installed smoke codex_home is a symlink")
+        return None
+    resolved = candidate.resolve()
+    if not resolved.is_dir():
+        reasons.append("installed smoke codex_home is missing")
+        return None
+    return resolved
+
+
+def resolve_installed_smoke_output_dir(path: Path | None, reasons: list[str]) -> Path | None:
+    if path is None:
+        reasons.append("installed smoke output directory was not provided")
+        return None
+    requested = path.expanduser()
+    if requested.is_symlink():
+        reasons.append("installed smoke output directory is a symlink")
+        return None
+    if not requested.is_absolute():
+        reasons.append("installed smoke output directory is not absolute")
+        return None
+    resolved = requested.resolve()
+    temp_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
+    if resolved.parent not in temp_roots or not resolved.name.startswith("codex-obsidian-sync-"):
+        roots = ", ".join(sorted(str(root) for root in temp_roots))
+        reasons.append(f"installed smoke output directory must be a dedicated codex-obsidian-sync-* path under {roots}")
+    elif resolved.exists():
+        if not resolved.is_dir():
+            reasons.append("installed smoke output path is not a directory")
+        elif any(resolved.iterdir()):
+            reasons.append("installed smoke output directory is not empty")
+    return resolved
+
+
+def cleanup_installed_smoke_output_dir(
+    output: Path,
+    details: dict[str, Any],
+    reasons: list[str],
+) -> None:
+    try:
+        resolved = output.expanduser().resolve()
+        temp_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
+        if resolved.parent not in temp_roots or not resolved.name.startswith("codex-obsidian-sync-"):
+            reasons.append("installed smoke output cleanup refused unsafe path")
+            return
+        if output.is_symlink():
+            reasons.append("installed smoke output cleanup refused symlink")
+            return
+        shutil.rmtree(resolved)
+        details["output_cleaned"] = True
+    except OSError as error:
+        reasons.append(f"installed smoke output cleanup failed: {error}")
+
+
+def parse_json_stdout(
+    result: subprocess.CompletedProcess[str],
+    label: str,
+    reasons: list[str],
+) -> Any:
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        reasons.append(f"{label} stdout is not valid JSON")
+        return None
+
+
+def first_nonempty_line(value: str) -> str | None:
+    for line in value.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
 
 
 def audit_rollback_binary(rollback_binary: str | None, expected_rust_binary: str | None) -> dict[str, Any]:
