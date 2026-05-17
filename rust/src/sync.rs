@@ -32,10 +32,11 @@ use crate::writer::{
     RealWriter, validate_vault_root as validate_real_vault_root, write_state_file,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SyncRunOptions {
     pub now_utc: OffsetDateTime,
     pub local_offset_override: Option<UtcOffset>,
+    pub read_trace_path: Option<PathBuf>,
 }
 
 impl SyncRunOptions {
@@ -43,6 +44,7 @@ impl SyncRunOptions {
         Self {
             now_utc: OffsetDateTime::now_utc(),
             local_offset_override: None,
+            read_trace_path: None,
         }
     }
 }
@@ -196,7 +198,11 @@ pub fn sync_once_dry_run_with_options(
     let started = Instant::now();
     let mut summary = SyncSummary::new(config.lock_file.exists());
     let vault_root = validate_vault_root(&config.vault)?;
-    let dry_run = DryRunOutput::prepare(config, requested_output)?;
+    let dry_run = DryRunOutput::prepare_with_read_trace(
+        config,
+        requested_output,
+        options.read_trace_path.as_deref(),
+    )?;
     let target = DryRunTarget { dry_run: &dry_run };
     summary.output_dir = dry_run.root().to_string_lossy().into_owned();
     summary.temp_state_file = dry_run.temp_state_file().to_string_lossy().into_owned();

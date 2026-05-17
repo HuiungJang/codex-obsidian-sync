@@ -18,6 +18,7 @@ pub struct DryRunOutput {
     root_canonical: PathBuf,
     vault_root: PathBuf,
     temp_state_file: PathBuf,
+    read_trace_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -28,19 +29,38 @@ pub struct DryRunOutputSummary {
     pub planned_writes: usize,
 }
 
+#[derive(Debug, Serialize)]
+struct ReadTraceEvent<'a> {
+    event: &'static str,
+    source: &'static str,
+    relative_path: &'a str,
+}
+
 impl DryRunOutput {
     pub fn prepare(config: &SyncConfig, requested: Option<&Path>) -> Result<Self, SyncError> {
+        Self::prepare_with_read_trace(config, requested, None)
+    }
+
+    pub fn prepare_with_read_trace(
+        config: &SyncConfig,
+        requested: Option<&Path>,
+        read_trace_path: Option<&Path>,
+    ) -> Result<Self, SyncError> {
         let root = match requested {
             Some(path) => validate_requested_output_root(path, config)?,
             None => create_default_output_root(config)?,
         };
         let root_canonical = validate_prepared_output_root(&root, config)?;
         let vault_root = fs::canonicalize(&config.vault).map_err(|_| SyncError::DryRunOutput)?;
+        let read_trace_path = read_trace_path
+            .map(|path| prepare_read_trace_path(path, config, &root_canonical))
+            .transpose()?;
         Ok(Self {
             temp_state_file: root.join("sync-state.json"),
             root,
             root_canonical,
             vault_root,
+            read_trace_path,
         })
     }
 
@@ -64,6 +84,7 @@ impl DryRunOutput {
     pub fn read_relative(&self, relative_path: &str) -> Result<Option<String>, SyncError> {
         let output_path = self.resolve_output_path(relative_path, false)?;
         if output_path.exists() {
+            self.record_read_attempt("dry_run_output", relative_path)?;
             return fs::read_to_string(output_path)
                 .map(Some)
                 .map_err(|_| SyncError::DryRunOutput);
@@ -71,6 +92,7 @@ impl DryRunOutput {
 
         let vault_path = resolve_read_path(&self.vault_root, relative_path)?;
         if vault_path.exists() {
+            self.record_read_attempt("vault", relative_path)?;
             fs::read_to_string(vault_path)
                 .map(Some)
                 .map_err(|_| SyncError::DryRunOutput)
@@ -136,6 +158,25 @@ impl DryRunOutput {
             return Err(SyncError::DryRunOutput);
         }
         Ok(target)
+    }
+
+    fn record_read_attempt(
+        &self,
+        source: &'static str,
+        relative_path: &str,
+    ) -> Result<(), SyncError> {
+        let Some(trace_path) = &self.read_trace_path else {
+            return Ok(());
+        };
+        let event = ReadTraceEvent {
+            event: "read_attempt",
+            source,
+            relative_path,
+        };
+        let line = serde_json::to_string(&event).map_err(|_| SyncError::DryRunOutput)?;
+        let mut file =
+            open_trace_file_for_append(trace_path).map_err(|_| SyncError::DryRunOutput)?;
+        writeln!(file, "{line}").map_err(|_| SyncError::DryRunOutput)
     }
 }
 
@@ -255,6 +296,48 @@ fn forbidden_output_roots(config: &SyncConfig) -> Result<Vec<PathBuf>, SyncError
         roots.push(resolved_path_for_validation(state_dir)?);
     }
     Ok(roots)
+}
+
+fn prepare_read_trace_path(
+    path: &Path,
+    config: &SyncConfig,
+    output_root: &Path,
+) -> Result<PathBuf, SyncError> {
+    if !path.is_absolute() {
+        return Err(SyncError::DryRunOutput);
+    }
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(SyncError::DryRunOutput);
+    }
+    if path.is_dir() {
+        return Err(SyncError::DryRunOutput);
+    }
+    let parent = path.parent().ok_or(SyncError::DryRunOutput)?;
+    let parent_metadata = fs::symlink_metadata(parent).map_err(|_| SyncError::DryRunOutput)?;
+    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+        return Err(SyncError::DryRunOutput);
+    }
+    let resolved_path = resolved_path_for_validation(path)?;
+    reject_resolved_forbidden_output_root(&resolved_path, config)?;
+    if is_within_root(&resolved_path, output_root) {
+        return Err(SyncError::DryRunOutput);
+    }
+    let file = open_private_file(path).map_err(|_| SyncError::DryRunOutput)?;
+    drop(file);
+    Ok(path.to_path_buf())
+}
+
+#[cfg(unix)]
+fn open_trace_file_for_append(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_trace_file_for_append(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new().append(true).open(path)
 }
 
 fn resolve_read_path(root: &Path, relative_path: &str) -> Result<PathBuf, SyncError> {

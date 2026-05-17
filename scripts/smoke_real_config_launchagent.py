@@ -41,6 +41,11 @@ def main() -> int:
     parser.add_argument("--sample", default="sample", help="sample executable. Defaults to PATH lookup.")
     parser.add_argument("--sample-seconds", type=float, default=3.0, help="Seconds to sample on timeout.")
     parser.add_argument(
+        "--trace-read-paths",
+        action="store_true",
+        help="Ask sync-once to write a dry-run note read trace JSONL file under the work dir.",
+    )
+    parser.add_argument(
         "--cleanup-dry-run-output",
         action="store_true",
         help="Remove the dry-run output directory after collecting evidence.",
@@ -59,6 +64,7 @@ def main() -> int:
         sample_on_timeout=args.sample_on_timeout,
         sample=args.sample,
         sample_seconds=args.sample_seconds,
+        trace_read_paths=args.trace_read_paths,
         cleanup_dry_run_output=args.cleanup_dry_run_output,
     )
     output = resolve_output_path(args.output)
@@ -126,6 +132,7 @@ def run_smoke(
     sample_on_timeout: bool,
     sample: str,
     sample_seconds: float,
+    trace_read_paths: bool,
     cleanup_dry_run_output: bool,
 ) -> dict[str, Any]:
     no_go_reasons: list[str] = []
@@ -137,6 +144,7 @@ def run_smoke(
         "timeout_seconds": timeout_seconds,
         "sample_on_timeout": sample_on_timeout,
         "sample_seconds": sample_seconds,
+        "trace_read_paths": trace_read_paths,
     }
     if not binary.is_file() or not os.access(binary, os.X_OK):
         no_go_reasons.append("binary is missing or not executable")
@@ -163,6 +171,7 @@ def run_smoke(
 
     assert launchctl_path is not None
     dry_run_output = work_dir / "dry-run-output"
+    read_trace_path = work_dir / "read-trace.jsonl" if trace_read_paths else None
     stdout_path = work_dir / "stdout.json"
     stderr_path = work_dir / "stderr.log"
     plist_path = work_dir / "agent.plist"
@@ -183,6 +192,7 @@ def run_smoke(
             binary=binary,
             config=config,
             dry_run_output=dry_run_output,
+            read_trace_path=read_trace_path,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             work_dir=work_dir,
@@ -261,6 +271,8 @@ def run_smoke(
             cleanup_error = cleanup_output_dir(dry_run_output, work_dir)
             if cleanup_error:
                 no_go_reasons.append(cleanup_error)
+        read_trace_head = read_trace_excerpt(read_trace_path, from_tail=False) if read_trace_path else []
+        read_trace_tail = read_trace_excerpt(read_trace_path, from_tail=True) if read_trace_path else []
         details.update(
             {
                 "target": target,
@@ -273,6 +285,10 @@ def run_smoke(
                 "launchctl_state_tail": final_launchctl[-1200:],
                 "dry_run_output": str(dry_run_output),
                 "dry_run_output_exists_after_cleanup": dry_run_output.exists(),
+                "read_trace": str(read_trace_path) if read_trace_path else None,
+                "read_trace_exists": read_trace_path.is_file() if read_trace_path else None,
+                "read_trace_head": read_trace_head,
+                "read_trace_tail": read_trace_tail,
                 "cleanup_error": cleanup_error,
                 "command_count": len(commands),
                 "loaded_after_bootout": loaded_after_bootout,
@@ -311,6 +327,7 @@ def write_smoke_plist(
     binary: Path,
     config: Path,
     dry_run_output: Path,
+    read_trace_path: Path | None,
     stdout_path: Path,
     stderr_path: Path,
     work_dir: Path,
@@ -331,6 +348,8 @@ def write_smoke_plist(
         "StandardErrorPath": str(stderr_path),
         "WorkingDirectory": str(work_dir),
     }
+    if read_trace_path is not None:
+        plist["ProgramArguments"].extend(["--trace-read-paths", str(read_trace_path)])
     with plist_path.open("wb") as handle:
         plistlib.dump(plist, handle)
 
@@ -510,6 +529,19 @@ def read_text_if_exists(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_trace_excerpt(path: Path, *, from_tail: bool, limit: int = 20) -> list[str]:
+    if not path.exists():
+        return []
+    lines = [
+        line
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
+    if from_tail:
+        return lines[-limit:]
+    return lines[:limit]
 
 
 def first_nonempty_line(text: str) -> str:

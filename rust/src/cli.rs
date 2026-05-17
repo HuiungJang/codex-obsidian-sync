@@ -37,6 +37,7 @@ pub struct SyncOnceArgs {
     pub state_file: Option<PathBuf>,
     pub lock_file: Option<PathBuf>,
     pub dry_run_output: Option<PathBuf>,
+    pub trace_read_paths: Option<PathBuf>,
     pub write: bool,
     pub include_subagents: Option<bool>,
     pub log_level: Option<String>,
@@ -106,6 +107,7 @@ impl Cli {
                     state_file: raw_args.state_file,
                     lock_file: raw_args.lock_file,
                     dry_run_output: raw_args.dry_run_output,
+                    trace_read_paths: raw_args.trace_read_paths,
                     write: raw_args.write,
                     include_subagents,
                     log_level: raw_args.log_level,
@@ -243,6 +245,13 @@ struct RawSyncOnceArgs {
 
     #[arg(long, value_name = "DIR", help = "Directory for dry-run output")]
     dry_run_output: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "Write dry-run note read trace JSONL"
+    )]
+    trace_read_paths: Option<PathBuf>,
 
     #[arg(long, action = clap::ArgAction::SetTrue, help = "Write to the configured vault and state")]
     write: bool,

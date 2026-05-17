@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_obsidian_sync_rs::config::SyncConfig;
 use codex_obsidian_sync_rs::dry_run_output::DryRunOutput;
+use serde_json::Value;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -137,6 +138,91 @@ fn overlay_read_prefers_output_then_real_vault_without_mutating_inputs() {
     );
     assert_eq!(fs::read_to_string(real_note).unwrap(), "real vault");
     assert_eq!(input_hashes(&config, &root), before_hashes);
+}
+
+#[test]
+fn overlay_read_trace_records_read_attempt_paths_when_requested() {
+    let root = temp_dir("read-trace");
+    let config = sync_config(&root);
+    let output = root.join("output");
+    let trace = root.join("read-trace.jsonl");
+    let real_note = config
+        .vault
+        .join("Codex")
+        .join("Daily")
+        .join("2026-04-04.md");
+    fs::create_dir_all(real_note.parent().unwrap()).unwrap();
+    fs::write(&real_note, "real vault").unwrap();
+
+    let dry_run =
+        DryRunOutput::prepare_with_read_trace(&config, Some(&output), Some(&trace)).unwrap();
+    assert!(trace.exists());
+    assert_eq!(fs::read_to_string(&trace).unwrap(), "");
+
+    assert_eq!(
+        dry_run.read_relative("Codex/Daily/2026-04-04.md").unwrap(),
+        Some("real vault".to_owned())
+    );
+    dry_run
+        .write_relative("Codex/Daily/2026-04-04.md", "dry output")
+        .unwrap();
+    assert_eq!(
+        dry_run.read_relative("Codex/Daily/2026-04-04.md").unwrap(),
+        Some("dry output".to_owned())
+    );
+
+    let events: Vec<Value> = fs::read_to_string(&trace)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "read_attempt");
+    assert_eq!(events[0]["source"], "vault");
+    assert_eq!(events[0]["relative_path"], "Codex/Daily/2026-04-04.md");
+    assert_eq!(events[1]["event"], "read_attempt");
+    assert_eq!(events[1]["source"], "dry_run_output");
+    assert_eq!(events[1]["relative_path"], "Codex/Daily/2026-04-04.md");
+}
+
+#[test]
+fn read_trace_rejects_forbidden_roots_and_output_root() {
+    let root = temp_dir("read-trace-forbidden-roots");
+    let config = sync_config(&root);
+
+    for trace in [
+        config.vault.join("read-trace.jsonl"),
+        config.codex_home.join("read-trace.jsonl"),
+        config.state_file.parent().unwrap().join("read-trace.jsonl"),
+        root.join("output").join("read-trace.jsonl"),
+    ] {
+        assert!(
+            DryRunOutput::prepare_with_read_trace(
+                &config,
+                Some(&root.join("output")),
+                Some(&trace)
+            )
+            .is_err()
+        );
+        let _ = fs::remove_dir_all(root.join("output"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn read_trace_rejects_symlinked_trace_file() {
+    let root = temp_dir("read-trace-symlink");
+    let config = sync_config(&root);
+    let trace = root.join("read-trace.jsonl");
+    let target = root.join("trace-target.jsonl");
+    fs::write(&target, "keep\n").unwrap();
+    std::os::unix::fs::symlink(&target, &trace).unwrap();
+
+    assert!(
+        DryRunOutput::prepare_with_read_trace(&config, Some(&root.join("output")), Some(&trace))
+            .is_err()
+    );
+    assert_eq!(fs::read_to_string(target).unwrap(), "keep\n");
 }
 
 #[test]

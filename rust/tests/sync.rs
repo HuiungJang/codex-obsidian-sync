@@ -665,6 +665,32 @@ fn cli_write_rejects_dry_run_output() {
 }
 
 #[test]
+fn cli_write_rejects_trace_read_paths() {
+    let root = temp_dir("write-trace-read-paths");
+    let config = sync_config(&root, false);
+
+    Command::cargo_bin(BIN)
+        .unwrap()
+        .args([
+            "sync-once",
+            "--write",
+            "--vault",
+            config.vault.to_str().unwrap(),
+            "--codex-home",
+            config.codex_home.to_str().unwrap(),
+            "--state-file",
+            config.state_file.to_str().unwrap(),
+            "--lock-file",
+            config.lock_file.to_str().unwrap(),
+            "--trace-read-paths",
+            root.join("read-trace.jsonl").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("config error"));
+}
+
+#[test]
 fn cli_write_outputs_python_shaped_summary() {
     let root = temp_dir("write-summary-shape");
     let config = sync_config(&root, false);
@@ -791,6 +817,7 @@ fn run_options() -> SyncRunOptions {
     SyncRunOptions {
         now_utc: OffsetDateTime::parse("2026-04-05T00:00:00Z", &Rfc3339).unwrap(),
         local_offset_override: Some(UtcOffset::UTC),
+        read_trace_path: None,
     }
 }
 
