@@ -1,0 +1,11 @@
+$ codex-obsidian-sync status --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync status [-h] [--json]
+
+options:
+  -h, --help  show this help message and exit
+  --json
+
+[stderr]

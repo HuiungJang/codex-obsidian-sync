@@ -1,0 +1,38 @@
+[package]
+name = "codex-obsidian-sync-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust migration target for syncing Codex conversations into an Obsidian vault"
+repository = "https://github.com/HuiungJang/codex-obsidian-sync"
+license = "Apache-2.0"
+
+[lib]
+name = "codex_obsidian_sync_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codex-obsidian-sync-rs"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+indexmap = { version = "2.14", features = ["serde"] }
+libc = "0.2"
+regex = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.11"
+thiserror = "2.0"
+time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }
+toml = "1.1"
+unicode-normalization = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+uzers = "0.12"
+
+[dev-dependencies]
+assert_cmd = "2.2"
+insta = { version = "1.44", features = ["filters", "json", "redactions"] }
+insta-cmd = "0.6"
+predicates = "3.1"

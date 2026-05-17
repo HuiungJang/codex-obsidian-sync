@@ -1,0 +1,634 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+from audit_cutover_readiness import (
+    DEFAULT_REPOSITORY,
+    FORMULA_NAME,
+    TARGETS,
+    cargo_version,
+    normalize_version,
+    validate_repository,
+    write_json,
+)
+from audit_release_evidence import audit_release_evidence
+
+
+GITHUB_API_URL = "https://api.github.com"
+RELEASE_EVIDENCE_SUMMARY = "release-evidence-summary.json"
+PUBLISHED_RELEASE_AUDIT = "published-release-audit.json"
+UrlOpener = Callable[[urllib.request.Request], Any]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Download and audit published GitHub Release assets.")
+    parser.add_argument(
+        "--version",
+        help="Release version or tag, for example 0.1.0 or v0.1.0. Defaults to rust/Cargo.toml.",
+    )
+    parser.add_argument(
+        "--repository",
+        default=DEFAULT_REPOSITORY,
+        help=f"GitHub repository in owner/name form. Defaults to {DEFAULT_REPOSITORY}.",
+    )
+    parser.add_argument(
+        "--download-dir",
+        required=True,
+        type=Path,
+        help="Empty directory where release assets will be downloaded.",
+    )
+    parser.add_argument(
+        "--github-api-url",
+        default=GITHUB_API_URL,
+        help=f"GitHub API base URL. Defaults to {GITHUB_API_URL}.",
+    )
+    parser.add_argument(
+        "--github-token",
+        default=os.environ.get("GITHUB_TOKEN"),
+        help="GitHub token for private releases or higher API limits. Defaults to GITHUB_TOKEN.",
+    )
+    parser.add_argument("--output", type=Path, help="Write the published-release audit report to this path.")
+    args = parser.parse_args()
+
+    repo_root = Path(__file__).resolve().parents[1]
+    version = normalize_version(args.version or cargo_version(repo_root / "rust" / "Cargo.toml"))
+    repository = validate_repository(args.repository)
+    result = audit_published_release(
+        version=version,
+        repository=repository,
+        download_dir=args.download_dir,
+        github_api_url=args.github_api_url,
+        github_token=args.github_token,
+    )
+
+    output = resolve_output_path(args.output)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        write_json(output, result)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0 if result["ok"] else 1
+
+
+def resolve_output_path(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    output = path.expanduser()
+    if output.is_symlink():
+        raise RuntimeError(f"output path is a symlink: {output}")
+    return output
+
+
+def audit_published_release(
+    *,
+    version: str,
+    repository: str,
+    download_dir: Path,
+    github_api_url: str = GITHUB_API_URL,
+    github_token: str | None = None,
+    opener: UrlOpener | None = None,
+) -> dict[str, Any]:
+    tag = f"v{version}"
+    no_go_reasons: list[str] = []
+    release: dict[str, Any] | None = None
+    downloaded_assets: list[dict[str, Any]] = []
+    extra_asset_names: list[str] = []
+    local_evidence_audit: dict[str, Any] | None = None
+    uploaded_evidence_summary: dict[str, Any] | None = None
+
+    try:
+        destination = prepare_download_dir(download_dir)
+        release = fetch_release(
+            github_api_url=github_api_url,
+            repository=repository,
+            tag=tag,
+            github_token=github_token,
+            opener=opener,
+        )
+        no_go_reasons.extend(validate_release_metadata(release, tag, repository))
+
+        assets = release_assets_by_name(
+            release,
+            tag=tag,
+            github_api_url=github_api_url,
+            repository=repository,
+        )
+        extra_asset_names = sorted(set(assets) - set(allowed_asset_names()))
+        for asset_name in extra_asset_names:
+            no_go_reasons.append(f"unexpected release asset: {asset_name}")
+        for asset_name in required_asset_names():
+            asset = assets.get(asset_name)
+            if asset is None:
+                no_go_reasons.append(f"missing release asset: {asset_name}")
+                continue
+            downloaded_assets.append(
+                download_asset(
+                    asset=asset,
+                    destination=destination / asset_name,
+                    github_token=github_token,
+                    opener=opener,
+                )
+            )
+
+        local_evidence_audit = audit_release_evidence(
+            release_dir=destination,
+            formula_path=destination / f"{FORMULA_NAME}.rb",
+            version=version,
+            repository=repository,
+            strict_summary_paths=False,
+        )
+        no_go_reasons.extend(f"local release evidence: {reason}" for reason in local_evidence_audit["no_go_reasons"])
+
+        uploaded_evidence_summary = read_uploaded_evidence_summary(destination / RELEASE_EVIDENCE_SUMMARY)
+        no_go_reasons.extend(validate_uploaded_evidence_summary(uploaded_evidence_summary, version, tag, repository))
+        no_go_reasons.extend(
+            validate_uploaded_evidence_summary_matches_local_audit(uploaded_evidence_summary, local_evidence_audit)
+        )
+    except Exception as error:
+        no_go_reasons.append(str(error))
+
+    release_details = release_summary(release)
+    return {
+        "ok": not no_go_reasons,
+        "version": version,
+        "tag": tag,
+        "repository": repository,
+        "download_dir": str(download_dir.expanduser().resolve()),
+        "release": release_details,
+        "downloaded_assets": downloaded_assets,
+        "missing_assets": sorted(set(required_asset_names()) - {asset["name"] for asset in downloaded_assets}),
+        "extra_assets": extra_asset_names,
+        "uploaded_evidence_summary": uploaded_evidence_summary,
+        "local_evidence_audit": local_evidence_audit,
+        "no_go_reasons": no_go_reasons,
+    }
+
+
+def required_asset_names() -> tuple[str, ...]:
+    names: list[str] = []
+    for target in TARGETS:
+        package_name = f"{FORMULA_NAME}-{target}.tar.gz"
+        names.extend(
+            [
+                package_name,
+                f"{package_name}.sha256",
+                f"{FORMULA_NAME}-{target}.smoke-summary.json",
+            ]
+        )
+    names.extend(
+        [
+            f"{FORMULA_NAME}.rb",
+            "homebrew-smoke-summary.json",
+            RELEASE_EVIDENCE_SUMMARY,
+        ]
+    )
+    return tuple(names)
+
+
+def allowed_asset_names() -> tuple[str, ...]:
+    return (*required_asset_names(), PUBLISHED_RELEASE_AUDIT)
+
+
+def required_evidence_check_names() -> tuple[str, ...]:
+    names: list[str] = []
+    for target in TARGETS:
+        names.append(f"release artifact:{target}")
+    names.extend(
+        [
+            "release directory contents",
+            "homebrew formula",
+        ]
+    )
+    for target in TARGETS:
+        names.append(f"release smoke summary:{target}")
+    names.append("homebrew smoke summary")
+    return tuple(names)
+
+
+def prepare_download_dir(download_dir: Path) -> Path:
+    requested_path = download_dir.expanduser()
+    if requested_path.is_symlink():
+        raise RuntimeError(f"download path is a symlink: {requested_path}")
+
+    destination = requested_path.resolve()
+    if destination.exists() and not destination.is_dir():
+        raise RuntimeError(f"download path is not a directory: {destination}")
+    if destination.exists() and any(destination.iterdir()):
+        raise RuntimeError(f"download directory is not empty: {destination}")
+    destination.mkdir(parents=True, exist_ok=True)
+    return destination
+
+
+def fetch_release(
+    *,
+    github_api_url: str,
+    repository: str,
+    tag: str,
+    github_token: str | None,
+    opener: UrlOpener | None,
+) -> dict[str, Any]:
+    api_url = github_api_url.rstrip("/")
+    url = f"{api_url}/repos/{repository}/releases/tags/{tag}"
+    release = read_json_url(url, github_token, "application/vnd.github+json", opener)
+    if not isinstance(release, dict):
+        raise RuntimeError("GitHub release response is not an object")
+    return release
+
+
+def validate_release_metadata(release: dict[str, Any], tag: str, repository: str) -> list[str]:
+    reasons: list[str] = []
+    if release.get("tag_name") != tag:
+        reasons.append("GitHub release tag does not match requested tag")
+    html_url = release.get("html_url")
+    expected_url_suffix = f"/{repository}/releases/tag/{tag}"
+    if not isinstance(html_url, str) or not html_url:
+        reasons.append("GitHub release html_url is missing")
+    elif not html_url.endswith(expected_url_suffix):
+        reasons.append("GitHub release html_url does not match requested repository and tag")
+    draft = release.get("draft")
+    prerelease = release.get("prerelease")
+    if draft is True:
+        reasons.append("GitHub release is still a draft")
+    elif draft is not False:
+        reasons.append("GitHub release draft flag is missing or not false")
+    if prerelease is True:
+        reasons.append("GitHub release is marked as a prerelease")
+    elif prerelease is not False:
+        reasons.append("GitHub release prerelease flag is missing or not false")
+    return reasons
+
+
+def release_assets_by_name(
+    release: dict[str, Any],
+    *,
+    tag: str,
+    github_api_url: str,
+    repository: str,
+) -> dict[str, dict[str, Any]]:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise RuntimeError("GitHub release assets are missing")
+
+    asset_url_prefix = f"{github_api_url.rstrip('/')}/repos/{repository}/releases/assets/"
+    browser_download_prefix = expected_browser_download_prefix(release, tag, repository)
+    by_name: dict[str, dict[str, Any]] = {}
+    duplicate_names: set[str] = set()
+    seen_asset_urls: dict[str, str] = {}
+    duplicate_asset_url_pairs: list[str] = []
+    malformed_assets: list[str] = []
+    for index, asset in enumerate(assets):
+        if not isinstance(asset, dict):
+            malformed_assets.append(f"#{index} is not an object")
+            continue
+        name = asset.get("name")
+        if not isinstance(name, str) or not name.strip():
+            malformed_assets.append(f"#{index} is missing a name")
+            continue
+        asset_id = asset.get("id")
+        if not is_positive_int(asset_id):
+            malformed_assets.append(f"{name} is missing a positive asset id")
+        digest = asset.get("digest")
+        if not is_sha256_digest(digest):
+            malformed_assets.append(f"{name} is missing a sha256 digest")
+        asset_url = asset.get("url")
+        if not isinstance(asset_url, str) or not asset_url:
+            malformed_assets.append(f"{name} is missing a download URL")
+        elif not asset_url.startswith(asset_url_prefix):
+            malformed_assets.append(f"{name} download URL is outside the requested repository")
+        elif not has_single_asset_url_suffix(asset_url, asset_url_prefix):
+            malformed_assets.append(f"{name} download URL has an invalid asset id")
+        elif is_positive_int(asset_id) and asset_url != f"{asset_url_prefix}{asset_id}":
+            malformed_assets.append(f"{name} download URL does not match asset id")
+        elif asset_url in seen_asset_urls:
+            duplicate_asset_url_pairs.append(f"{seen_asset_urls[asset_url]} and {name} share {asset_url}")
+        else:
+            seen_asset_urls[asset_url] = name
+        if asset.get("state") != "uploaded":
+            malformed_assets.append(f"{name} asset state is not uploaded")
+        browser_download_url = asset.get("browser_download_url")
+        expected_browser_download_url = f"{browser_download_prefix}{name}"
+        if not isinstance(browser_download_url, str) or not browser_download_url:
+            malformed_assets.append(f"{name} is missing a browser download URL")
+        elif browser_download_url != expected_browser_download_url:
+            malformed_assets.append(
+                f"{name} browser download URL does not match the requested repository, tag, and asset name"
+            )
+        size = asset.get("size")
+        if not is_non_negative_int(size):
+            malformed_assets.append(f"{name} is missing a non-negative size")
+        if name in by_name:
+            duplicate_names.add(name)
+        by_name[name] = asset
+    if malformed_assets:
+        raise RuntimeError("GitHub release has malformed asset metadata: " + "; ".join(malformed_assets))
+    if duplicate_names:
+        duplicates = ", ".join(sorted(duplicate_names))
+        raise RuntimeError(f"GitHub release has duplicate asset names: {duplicates}")
+    if duplicate_asset_url_pairs:
+        duplicates = ", ".join(sorted(duplicate_asset_url_pairs))
+        raise RuntimeError(f"GitHub release has duplicate asset download URLs: {duplicates}")
+    return by_name
+
+
+def has_single_asset_url_suffix(asset_url: str, asset_url_prefix: str) -> bool:
+    suffix = asset_url[len(asset_url_prefix) :]
+    return bool(suffix) and "/" not in suffix
+
+
+def expected_browser_download_prefix(release: dict[str, Any], tag: str, repository: str) -> str:
+    release_html_url = release.get("html_url")
+    suffix = f"/{repository}/releases/tag/{tag}"
+    if isinstance(release_html_url, str) and release_html_url.endswith(suffix):
+        host_prefix = release_html_url[: -len(suffix)]
+    else:
+        host_prefix = "https://github.com"
+    return f"{host_prefix}/{repository}/releases/download/{tag}/"
+
+
+def download_asset(
+    *,
+    asset: dict[str, Any],
+    destination: Path,
+    github_token: str | None,
+    opener: UrlOpener | None,
+) -> dict[str, Any]:
+    asset_url = asset.get("url")
+    name = asset.get("name")
+    if not isinstance(asset_url, str) or not asset_url:
+        raise RuntimeError(f"release asset URL is missing: {name}")
+    if not isinstance(name, str) or not name:
+        raise RuntimeError("release asset name is missing")
+    expected_size = asset.get("size")
+    if not is_non_negative_int(expected_size):
+        raise RuntimeError(f"release asset size is missing or invalid for {name}")
+    expected_digest = asset.get("digest")
+    if not is_sha256_digest(expected_digest):
+        raise RuntimeError(f"release asset digest is missing or invalid for {name}")
+
+    payload = read_bytes_url(asset_url, github_token, "application/octet-stream", opener)
+    size_matches = expected_size == len(payload)
+    if not size_matches:
+        raise RuntimeError(f"release asset size mismatch for {name}")
+    digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    digest_matches = expected_digest == digest
+    if not digest_matches:
+        raise RuntimeError(f"release asset digest mismatch for {name}")
+    destination.write_bytes(payload)
+    return {
+        "name": name,
+        "path": str(destination),
+        "size": len(payload),
+        "expected_size": expected_size,
+        "size_matches": size_matches,
+        "digest": digest,
+        "expected_digest": expected_digest,
+        "digest_matches": digest_matches,
+    }
+
+
+def is_non_negative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def is_sha256_digest(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    prefix = "sha256:"
+    if not value.startswith(prefix):
+        return False
+    digest = value[len(prefix) :]
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
+def is_parseable_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def read_uploaded_evidence_summary(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {"ok": False, "no_go_reasons": ["release evidence summary asset is missing"]}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        return {"ok": False, "no_go_reasons": ["release evidence summary is not an object"]}
+    return value
+
+
+def validate_uploaded_evidence_summary(summary: dict[str, Any], version: str, tag: str, repository: str) -> list[str]:
+    reasons: list[str] = []
+    if summary.get("ok") is not True:
+        reasons.append("uploaded release evidence summary ok is not true")
+    if summary.get("version") != version:
+        reasons.append("uploaded release evidence summary version does not match requested version")
+    if summary.get("tag") != tag:
+        reasons.append("uploaded release evidence summary tag does not match requested tag")
+    if summary.get("repository") != repository:
+        reasons.append("uploaded release evidence summary repository does not match requested repository")
+    if not is_parseable_timestamp(summary.get("generated_at")):
+        reasons.append("uploaded release evidence summary generated_at is missing or invalid")
+    no_go = summary.get("no_go_reasons")
+    if no_go != []:
+        reasons.append("uploaded release evidence summary no_go_reasons is not an empty list")
+    checks = summary.get("checks")
+    if not isinstance(checks, list) or not checks:
+        reasons.append("uploaded release evidence summary checks are missing")
+    elif any(not isinstance(check, dict) or check.get("ok") is not True for check in checks):
+        reasons.append("uploaded release evidence summary contains failed checks")
+    else:
+        if any(check.get("no_go_reasons") != [] for check in checks):
+            reasons.append("uploaded release evidence summary contains check no-go reasons")
+        uploaded_name_counts: dict[str, int] = {}
+        malformed_names: list[str] = []
+        malformed_details: list[str] = []
+        for index, check in enumerate(checks):
+            name = check.get("name")
+            if not isinstance(name, str) or not name.strip():
+                malformed_names.append(f"#{index}")
+                continue
+            uploaded_name_counts[name] = uploaded_name_counts.get(name, 0) + 1
+            details = check.get("details")
+            if not isinstance(details, dict) or not details:
+                malformed_details.append(name)
+        if malformed_names:
+            reasons.append(f"uploaded release evidence summary contains malformed check names: {malformed_names}")
+        if malformed_details:
+            reasons.append(f"uploaded release evidence summary contains malformed check details: {malformed_details}")
+        reasons.extend(validate_uploaded_check_details(checks, version, repository))
+        uploaded_names = set(uploaded_name_counts)
+        duplicate_names = sorted(name for name, count in uploaded_name_counts.items() if count > 1)
+        if duplicate_names:
+            reasons.append(f"uploaded release evidence summary contains duplicate checks: {duplicate_names}")
+        unexpected_names = sorted(name for name in uploaded_names if name not in required_evidence_check_names())
+        if unexpected_names:
+            reasons.append(f"uploaded release evidence summary contains unexpected checks: {unexpected_names}")
+        missing_names = [name for name in required_evidence_check_names() if name not in uploaded_names]
+        if missing_names:
+            reasons.append(f"uploaded release evidence summary is missing checks: {missing_names}")
+    return reasons
+
+
+def validate_uploaded_check_details(checks: list[dict[str, Any]], version: str, repository: str) -> list[str]:
+    reasons: list[str] = []
+    for check in checks:
+        name = check.get("name")
+        details = check.get("details")
+        if not isinstance(name, str) or not isinstance(details, dict):
+            continue
+        if name.startswith("release artifact:") or name.startswith("release smoke summary:"):
+            expected_target = name.rsplit(":", 1)[1]
+            if details.get("target") != expected_target:
+                reasons.append(f"uploaded release evidence summary check target mismatch: {name}")
+        elif name == "homebrew formula":
+            if details.get("version") != version:
+                reasons.append("uploaded release evidence summary formula version does not match requested version")
+            if details.get("repository") != repository:
+                reasons.append("uploaded release evidence summary formula repository does not match requested repository")
+        elif name == "homebrew smoke summary" and details.get("expected_version") != version:
+            reasons.append("uploaded release evidence summary Homebrew smoke version does not match requested version")
+    return reasons
+
+
+def validate_uploaded_evidence_summary_matches_local_audit(
+    summary: dict[str, Any],
+    local_audit: dict[str, Any],
+) -> list[str]:
+    uploaded_checks = checks_by_name(summary.get("checks"))
+    local_checks = checks_by_name(local_audit.get("checks"))
+    reasons: list[str] = []
+    for name in required_evidence_check_names():
+        uploaded_details = uploaded_checks.get(name, {}).get("details")
+        local_details = local_checks.get(name, {}).get("details")
+        if not isinstance(uploaded_details, dict) or not isinstance(local_details, dict):
+            continue
+        for field in comparable_check_detail_fields(name):
+            if uploaded_details.get(field) != local_details.get(field):
+                reasons.append(f"uploaded release evidence summary check detail mismatch: {name}.{field}")
+    return reasons
+
+
+def checks_by_name(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, list):
+        return {}
+    return {check["name"]: check for check in value if isinstance(check, dict) and isinstance(check.get("name"), str)}
+
+
+def comparable_check_detail_fields(name: str) -> tuple[str, ...]:
+    if name.startswith("release artifact:"):
+        return ("target", "checksum", "checksum_matches")
+    if name == "release directory contents":
+        return ("expected_files", "symlinks", "unexpected_files", "unexpected_directories")
+    if name == "homebrew formula":
+        return ("version", "repository", "targets")
+    if name.startswith("release smoke summary:"):
+        return (
+            "target",
+            "expected_version",
+            "version",
+            "expected_tarball_sha256",
+            "expected_checksum_sha256",
+            "tarball_sha256",
+            "checksum_sha256",
+            "installed_binary",
+            "status_configured",
+            "status_json_parsed",
+            "dry_run",
+            "vault_unchanged",
+            "uninstalled",
+            "installed_after",
+            "inspect_count",
+            "note_files",
+            "command_count",
+        )
+    if name == "homebrew smoke summary":
+        return (
+            "expected_version",
+            "summary_expected_version",
+            "brew",
+            "formula_sha256",
+            "expected_formula_sha256",
+            "version",
+            "installed_binary",
+            "homebrew_prefix",
+            "installed_after",
+            "status_configured",
+            "status_json_parsed",
+            "dry_run",
+            "vault_unchanged",
+            "note_files",
+            "command_count",
+        )
+    return ()
+
+
+def release_summary(release: dict[str, Any] | None) -> dict[str, Any] | None:
+    if release is None:
+        return None
+    assets = release.get("assets")
+    asset_count = len(assets) if isinstance(assets, list) else None
+    return {
+        "tag_name": release.get("tag_name"),
+        "html_url": release.get("html_url"),
+        "draft": release.get("draft"),
+        "prerelease": release.get("prerelease"),
+        "asset_count": asset_count,
+    }
+
+
+def read_json_url(
+    url: str,
+    github_token: str | None,
+    accept: str,
+    opener: UrlOpener | None,
+) -> Any:
+    return json.loads(read_bytes_url(url, github_token, accept, opener).decode("utf-8"))
+
+
+def read_bytes_url(
+    url: str,
+    github_token: str | None,
+    accept: str,
+    opener: UrlOpener | None,
+) -> bytes:
+    request = urllib.request.Request(url, headers=github_headers(github_token, accept))
+    open_url = opener or default_urlopen
+    with open_url(request) as response:
+        return response.read()
+
+
+def default_urlopen(request: urllib.request.Request) -> Any:
+    return urllib.request.urlopen(request, timeout=60)
+
+
+def github_headers(github_token: str | None, accept: str) -> dict[str, str]:
+    headers = {
+        "Accept": accept,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "codex-obsidian-sync-release-audit",
+    }
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+    return headers
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(1)

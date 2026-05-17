@@ -1,0 +1,17 @@
+{
+  "KeepAlive": false,
+  "Label": "com.codex.obsidian-sync",
+  "ProgramArguments": [
+    "<python-executable>",
+    "-m",
+    "codex_obsidian_sync.cli",
+    "--config",
+    "/tmp/codex-obsidian-sync-python-baseline/config.toml",
+    "service-run"
+  ],
+  "RunAtLoad": false,
+  "StandardErrorPath": "/tmp/codex-obsidian-sync-python-baseline/.codex/obsidian-sync/launchd.stderr.log",
+  "StandardOutPath": "/tmp/codex-obsidian-sync-python-baseline/.codex/obsidian-sync/launchd.stdout.log",
+  "StartInterval": 60,
+  "ThrottleInterval": 1
+}

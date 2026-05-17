@@ -1,0 +1,16 @@
+$ codex-obsidian-sync inspect-rollout --help
+exit_code: 0
+
+[stdout]
+usage: codex-obsidian-sync inspect-rollout [-h]
+                                           [--session-index SESSION_INDEX]
+                                           rollout_path
+
+positional arguments:
+  rollout_path
+
+options:
+  -h, --help            show this help message and exit
+  --session-index SESSION_INDEX
+
+[stderr]
