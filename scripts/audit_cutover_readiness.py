@@ -20,6 +20,7 @@ from typing import Any, Callable
 DEFAULT_REPOSITORY = "HuiungJang/codex-obsidian-sync"
 FORMULA_NAME = "codex-obsidian-sync"
 DEFAULT_LAUNCHD_LABEL = "com.codex.obsidian-sync"
+MACOS_SIGNING_IDENTIFIER = DEFAULT_LAUNCHD_LABEL
 MONITOR_MARKER = ".codex-obsidian-sync-cutover-monitor"
 MONITOR_MARKER_CONTENT = "managed by record_cutover_monitor.py\n"
 TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin")
@@ -472,6 +473,7 @@ def audit_release_smoke_summary(
         return check(f"release smoke summary:{target}", False, details, reasons)
 
     commands = summary.get("commands")
+    codesign = summary.get("codesign")
     installed_binary = summary.get("installed_binary")
     details.update(
         {
@@ -492,6 +494,10 @@ def audit_release_smoke_summary(
             "note_files": summary.get("note_files"),
             "summary_no_go_reasons": summary.get("no_go_reasons"),
             "command_count": len(commands) if isinstance(commands, list) else None,
+            "codesign_checked": codesign.get("checked") if isinstance(codesign, dict) else None,
+            "codesign_identifier": codesign.get("identifier") if isinstance(codesign, dict) else None,
+            "codesign_signature": codesign.get("signature") if isinstance(codesign, dict) else None,
+            "codesign_team_identifier": codesign.get("team_identifier") if isinstance(codesign, dict) else None,
         }
     )
     if summary.get("ok") is not True:
@@ -535,6 +541,15 @@ def audit_release_smoke_summary(
         reasons.append("release smoke installed_binary is missing")
     elif not Path(installed_binary).is_absolute():
         reasons.append("release smoke installed_binary is not absolute")
+    if not isinstance(codesign, dict):
+        reasons.append("release smoke codesign evidence is missing")
+    else:
+        if codesign.get("checked") is not True:
+            reasons.append("release smoke codesign was not checked")
+        if codesign.get("identifier") != MACOS_SIGNING_IDENTIFIER:
+            reasons.append("release smoke codesign identifier does not match expected LaunchAgent identifier")
+        if not isinstance(codesign.get("signature"), str) or not codesign.get("signature"):
+            reasons.append("release smoke codesign signature is missing")
     if not isinstance(commands, list):
         reasons.append("release smoke commands are missing")
     else:

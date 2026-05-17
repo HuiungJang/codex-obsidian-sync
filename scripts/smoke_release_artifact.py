@@ -32,6 +32,15 @@ def main() -> int:
         help="Expected semantic version without the binary name, for example 0.1.0.",
     )
     parser.add_argument(
+        "--expected-signing-identifier",
+        help="Expected macOS codesign identifier. When provided, the smoke fails if codesign evidence is missing or different.",
+    )
+    parser.add_argument(
+        "--codesign",
+        default="codesign",
+        help="codesign executable used for macOS signing evidence. Defaults to PATH lookup.",
+    )
+    parser.add_argument(
         "--work-dir",
         type=Path,
         help="Dedicated /tmp/codex-obsidian-sync-* smoke directory. Created if omitted.",
@@ -48,6 +57,8 @@ def main() -> int:
         checksum=checksum,
         work_dir=work_dir,
         expected_version=args.expected_version,
+        expected_signing_identifier=args.expected_signing_identifier,
+        codesign=args.codesign,
     )
     write_json(work_dir / "smoke-summary.json", result)
     print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -96,6 +107,8 @@ def run_smoke(
     checksum: Path,
     work_dir: Path,
     expected_version: str | None,
+    expected_signing_identifier: str | None,
+    codesign: str,
 ) -> dict[str, Any]:
     if tarball.is_symlink():
         raise RuntimeError(f"Release tarball is a symlink: {tarball}")
@@ -115,6 +128,11 @@ def run_smoke(
     safe_extract_tarball(tarball, extract_dir)
     extracted_binary = find_extracted_binary(extract_dir)
     installed_binary = install_binary(extracted_binary, work_dir / "bin")
+    signature = inspect_codesign(
+        installed_binary,
+        codesign=codesign,
+        expected_identifier=expected_signing_identifier,
+    )
 
     runtime = work_dir / "runtime"
     dry_run_output = work_dir / "dry-run-output"
@@ -197,6 +215,7 @@ def run_smoke(
         "checksum_sha256": checksum_sha256,
         "work_dir": str(work_dir),
         "installed_binary": str(installed_binary),
+        "codesign": signature,
         "uninstalled": True,
         "installed_after": installed_after,
         "version": version_line,
@@ -272,6 +291,77 @@ def install_binary(source: Path, bin_dir: Path) -> Path:
     shutil.copy2(source, target)
     target.chmod(0o755)
     return target
+
+
+def inspect_codesign(
+    binary: Path,
+    *,
+    codesign: str,
+    expected_identifier: str | None,
+) -> dict[str, Any]:
+    tool = resolve_executable(codesign)
+    if tool is None:
+        if expected_identifier:
+            raise RuntimeError(f"codesign executable was not found: {codesign}")
+        return {"checked": False, "reason": f"codesign executable was not found: {codesign}"}
+
+    result = subprocess.run(
+        [str(tool), "-dv", "--verbose=4", str(binary)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    details = parse_codesign_output(output)
+    details.update(
+        {
+            "checked": result.returncode == 0,
+            "returncode": result.returncode,
+            "tool": str(tool),
+        }
+    )
+    if result.returncode != 0:
+        if expected_identifier:
+            raise RuntimeError("codesign inspection failed for installed binary")
+        details["reason"] = "codesign inspection failed"
+    if expected_identifier and details.get("identifier") != expected_identifier:
+        raise RuntimeError(
+            f"Unexpected codesign identifier: {details.get('identifier')!r}, expected {expected_identifier!r}"
+        )
+    return details
+
+
+def resolve_executable(command: str) -> Path | None:
+    path = Path(command).expanduser()
+    if path.parent != Path("."):
+        return path.resolve() if path.is_file() and path.exists() else None
+    resolved = shutil.which(command)
+    return Path(resolved).resolve() if resolved else None
+
+
+def parse_codesign_output(output: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "identifier": None,
+        "signature": None,
+        "team_identifier": None,
+        "cdhash": None,
+        "authorities": [],
+    }
+    authorities: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Identifier="):
+            fields["identifier"] = line.removeprefix("Identifier=")
+        elif line.startswith("Signature="):
+            fields["signature"] = line.removeprefix("Signature=")
+        elif line.startswith("TeamIdentifier="):
+            fields["team_identifier"] = line.removeprefix("TeamIdentifier=")
+        elif line.startswith("CDHash="):
+            fields["cdhash"] = line.removeprefix("CDHash=")
+        elif line.startswith("Authority="):
+            authorities.append(line.removeprefix("Authority="))
+    fields["authorities"] = authorities
+    return fields
 
 
 def uninstall_binary(target: Path) -> None:

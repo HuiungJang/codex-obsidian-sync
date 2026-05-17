@@ -1325,6 +1325,13 @@ def write_release_smoke_summaries(release_dir: Path) -> None:
                     "checksum": str(checksum),
                     "checksum_sha256": hashlib.sha256(checksum.read_bytes()).hexdigest(),
                     "installed_binary": installed_binary,
+                    "codesign": {
+                        "checked": True,
+                        "identifier": "com.codex.obsidian-sync",
+                        "signature": "adhoc",
+                        "team_identifier": "not set",
+                        "cdhash": "abc123",
+                    },
                     "version": "codex-obsidian-sync 0.1.0",
                     "status_configured": True,
                     "status_json_parsed": True,
