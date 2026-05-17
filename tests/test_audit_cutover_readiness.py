@@ -295,6 +295,55 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             report["no_go_reasons"],
         )
 
+    def test_real_launchagent_smoke_summary_requires_signing_evidence(self) -> None:
+        cases = [
+            (
+                "missing codesign",
+                {"include_codesign": False},
+                "summary codesign evidence is missing",
+            ),
+            (
+                "unexpected expected identifier",
+                {
+                    "expected_signing_identifier": "codex_obsidian_sync_rs-random",
+                    "codesign_identifier": "codex_obsidian_sync_rs-random",
+                },
+                "summary expected signing identifier does not match LaunchAgent identifier",
+            ),
+            (
+                "unexpected codesign identifier",
+                {"codesign_identifier": "codex_obsidian_sync_rs-random"},
+                "summary codesign identifier does not match expected signing identifier",
+            ),
+            (
+                "unchecked codesign",
+                {"codesign_checked": False},
+                "summary codesign was not checked",
+            ),
+        ]
+        for name, summary_kwargs, reason in cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+                    root = Path(temp_dir)
+                    installed_binary = root / "installed" / "codex-obsidian-sync"
+                    config_path = root / "config.toml"
+                    summary_path = root / "real-launchagent-summary.json"
+                    write_real_launchagent_smoke_summary(
+                        summary_path,
+                        installed_binary,
+                        config_path,
+                        **summary_kwargs,
+                    )
+
+                    result = audit_cutover_readiness.audit_real_launchagent_dry_run_summary(
+                        summary_path,
+                        str(installed_binary),
+                        config_path,
+                    )
+
+                self.assertFalse(result["ok"])
+                self.assertIn(reason, result["no_go_reasons"])
+
     def test_installed_rust_binary_smoke_fails_when_vault_codex_path_is_not_directory(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
             root = Path(temp_dir)
@@ -1931,24 +1980,39 @@ def write_real_launchagent_smoke_summary(
     *,
     ok: bool = True,
     no_go_reasons: list[str] | None = None,
+    expected_signing_identifier: str | None = "com.codex.obsidian-sync",
+    include_codesign: bool = True,
+    codesign_checked: bool = True,
+    codesign_identifier: str | None = "com.codex.obsidian-sync",
+    codesign_signature: str | None = "adhoc",
 ) -> None:
+    details = {
+        "binary": str(binary),
+        "config": str(config),
+        "label": "com.codex.obsidian-sync.real-dry-run-smoke.test",
+        "expected_signing_identifier": expected_signing_identifier,
+        "dry_run": True,
+        "processed": 1,
+        "note_files": 1,
+        "temp_state_exists": True,
+        "stdout_parseable_json": True,
+        "loaded_after_bootout": False,
+        "dry_run_output_exists_after_cleanup": False,
+    }
+    if include_codesign:
+        details["codesign"] = {
+            "checked": codesign_checked,
+            "identifier": codesign_identifier,
+            "signature": codesign_signature,
+            "team_identifier": "not set",
+            "cdhash": "abc123",
+        }
     path.write_text(
         json.dumps(
             {
                 "ok": ok,
                 "generated_at": "2026-05-17T00:00:00+00:00",
-                "details": {
-                    "binary": str(binary),
-                    "config": str(config),
-                    "label": "com.codex.obsidian-sync.real-dry-run-smoke.test",
-                    "dry_run": True,
-                    "processed": 1,
-                    "note_files": 1,
-                    "temp_state_exists": True,
-                    "stdout_parseable_json": True,
-                    "loaded_after_bootout": False,
-                    "dry_run_output_exists_after_cleanup": False,
-                },
+                "details": details,
                 "no_go_reasons": no_go_reasons or [],
             }
         )
