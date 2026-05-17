@@ -108,6 +108,51 @@ class SmokeRealConfigLaunchAgentTests(unittest.TestCase):
         self.assertFalse(report["details"]["loaded_after_bootout"])
         self.assertIn("bootout", log)
 
+    def test_records_sample_excerpt_on_timeout_when_requested(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
+            root = Path(temp_dir)
+            binary = write_fake_binary(root)
+            launchctl = write_fake_launchctl(root, timeout=True)
+            sample = write_fake_sample(root)
+            config = root / "config.toml"
+            config.write_text("vault = \"/tmp/example\"\n", encoding="utf-8")
+            work_dir = Path(gettempdir()) / f"codex-obsidian-sync-real-launchagent-smoke-{root.name}"
+            self.addCleanup(shutil.rmtree, work_dir, ignore_errors=True)
+            label = f"{smoke_real_config_launchagent.LABEL_PREFIX}{root.name.replace('_', '-')}"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/smoke_real_config_launchagent.py",
+                    "--binary",
+                    str(binary),
+                    "--config",
+                    str(config),
+                    "--launchctl",
+                    str(launchctl),
+                    "--work-dir",
+                    str(work_dir),
+                    "--label",
+                    label,
+                    "--timeout-seconds",
+                    "0.1",
+                    "--sample-on-timeout",
+                    "--sample",
+                    str(sample),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["details"]["pid"], 12345)
+        self.assertEqual(report["details"]["sample_returncode"], 0)
+        self.assertTrue(Path(report["details"]["sample_output"]).is_file())
+        self.assertIn("DryRunOutput::read_relative", "\n".join(report["details"]["sample_excerpt"]))
+
     def test_rejects_real_service_label(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
             root = Path(temp_dir)
@@ -218,6 +263,7 @@ if len(args) == 2 and args[0] == "print":
         raise SystemExit(113)
     exit_code = state.read_text(encoding="utf-8")
     print("state = running")
+    print("pid = 12345")
     print(f"last exit code = {{exit_code}}")
     raise SystemExit(0)
 if len(args) == 3 and args[0] == "bootstrap":
@@ -256,6 +302,31 @@ raise SystemExit(2)
     )
     launchctl.chmod(0o755)
     return launchctl
+
+
+def write_fake_sample(root: Path) -> Path:
+    sample = root / "sample"
+    sample.write_text(
+        """#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if len(args) == 4 and args[2] == "-file":
+    Path(args[3]).write_text(
+        "codex_obsidian_sync_rs::sync::run_sync\\n"
+        "codex_obsidian_sync_rs::dry_run_output::DryRunOutput::read_relative\\n"
+        "open\\n",
+        encoding="utf-8",
+    )
+    raise SystemExit(0)
+print("unexpected sample args: " + " ".join(args), file=sys.stderr)
+raise SystemExit(2)
+""",
+        encoding="utf-8",
+    )
+    sample.chmod(0o755)
+    return sample
 
 
 if __name__ == "__main__":

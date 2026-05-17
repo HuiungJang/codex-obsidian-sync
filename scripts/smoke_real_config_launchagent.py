@@ -34,6 +34,13 @@ def main() -> int:
     )
     parser.add_argument("--timeout-seconds", type=float, default=180.0, help="Seconds to wait for sync output.")
     parser.add_argument(
+        "--sample-on-timeout",
+        action="store_true",
+        help="Run sample(1) briefly against the timed-out process and save a stack file under the work dir.",
+    )
+    parser.add_argument("--sample", default="sample", help="sample executable. Defaults to PATH lookup.")
+    parser.add_argument("--sample-seconds", type=float, default=3.0, help="Seconds to sample on timeout.")
+    parser.add_argument(
         "--cleanup-dry-run-output",
         action="store_true",
         help="Remove the dry-run output directory after collecting evidence.",
@@ -49,6 +56,9 @@ def main() -> int:
         launchctl=args.launchctl,
         label=args.label or f"{LABEL_PREFIX}{os.getpid()}",
         timeout_seconds=args.timeout_seconds,
+        sample_on_timeout=args.sample_on_timeout,
+        sample=args.sample,
+        sample_seconds=args.sample_seconds,
         cleanup_dry_run_output=args.cleanup_dry_run_output,
     )
     output = resolve_output_path(args.output)
@@ -113,6 +123,9 @@ def run_smoke(
     launchctl: str,
     label: str,
     timeout_seconds: float,
+    sample_on_timeout: bool,
+    sample: str,
+    sample_seconds: float,
     cleanup_dry_run_output: bool,
 ) -> dict[str, Any]:
     no_go_reasons: list[str] = []
@@ -122,6 +135,8 @@ def run_smoke(
         "work_dir": str(work_dir),
         "label": label,
         "timeout_seconds": timeout_seconds,
+        "sample_on_timeout": sample_on_timeout,
+        "sample_seconds": sample_seconds,
     }
     if not binary.is_file() or not os.access(binary, os.X_OK):
         no_go_reasons.append("binary is missing or not executable")
@@ -133,10 +148,15 @@ def run_smoke(
         no_go_reasons.append(f"label must start with {LABEL_PREFIX}")
     if timeout_seconds <= 0:
         no_go_reasons.append("timeout must be positive")
+    if sample_seconds <= 0:
+        no_go_reasons.append("sample seconds must be positive")
 
     launchctl_path = resolve_executable(launchctl)
     if launchctl_path is None:
         no_go_reasons.append(f"launchctl executable was not found: {launchctl}")
+    sample_path = resolve_executable(sample) if sample_on_timeout else None
+    if sample_on_timeout and sample_path is None:
+        no_go_reasons.append(f"sample executable was not found: {sample}")
     if no_go_reasons:
         details["command_count"] = 0
         return smoke_result(False, details, no_go_reasons)
@@ -155,6 +175,7 @@ def run_smoke(
     stdout_text = ""
     final_launchctl = ""
     loaded_after_bootout = False
+    timed_out = False
 
     try:
         write_smoke_plist(
@@ -198,6 +219,7 @@ def run_smoke(
 
             state = run_launchctl([launchctl_path, "print", target], commands)
             final_launchctl = state.stdout if state.returncode == 0 else state.stderr
+            details["pid"] = launchctl_pid(final_launchctl)
             if state.returncode != 0:
                 no_go_reasons.append("temporary LaunchAgent disappeared before producing output")
                 break
@@ -210,6 +232,7 @@ def run_smoke(
             time.sleep(poll_interval)
 
         if not no_go_reasons and summary is None:
+            timed_out = True
             no_go_reasons.append("sync-once dry-run timed out")
 
         stdout_text = read_text_if_exists(stdout_path)
@@ -220,6 +243,15 @@ def run_smoke(
 
         if summary is not None:
             validate_summary(summary, dry_run_output, no_go_reasons, details)
+        elif timed_out and sample_on_timeout and sample_path is not None:
+            record_timeout_sample(
+                sample_path=sample_path,
+                sample_seconds=sample_seconds,
+                work_dir=work_dir,
+                launchctl_output=final_launchctl,
+                details=details,
+                commands=commands,
+            )
     finally:
         if booted:
             run_launchctl([launchctl_path, "bootout", target], commands)
@@ -344,6 +376,74 @@ def launchctl_finished(output: str) -> bool:
 def launchctl_exit_code(output: str) -> str | None:
     match = re.search(r"last exit code = ([^\n]+)", output)
     return match.group(1).strip() if match else None
+
+
+def launchctl_pid(output: str) -> int | None:
+    match = re.search(r"\bpid = (\d+)", output)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def record_timeout_sample(
+    *,
+    sample_path: Path,
+    sample_seconds: float,
+    work_dir: Path,
+    launchctl_output: str,
+    details: dict[str, Any],
+    commands: list[dict[str, Any]],
+) -> None:
+    pid = launchctl_pid(launchctl_output)
+    details["pid"] = pid
+    if pid is None:
+        details["sample_skipped"] = "pid unavailable"
+        return
+
+    output_path = work_dir / "timeout-sample.txt"
+    result = subprocess.run(
+        [str(sample_path), str(pid), sample_seconds_arg(sample_seconds), "-file", str(output_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    commands.append(command_record(result))
+    details["sample_returncode"] = result.returncode
+    details["sample_output"] = str(output_path)
+    sample_text = read_text_if_exists(output_path)
+    if sample_text:
+        details["sample_excerpt"] = sample_excerpt(sample_text)
+    elif result.stdout or result.stderr:
+        details["sample_excerpt"] = sample_excerpt(f"{result.stdout}\n{result.stderr}")
+
+
+def sample_excerpt(text: str, *, limit: int = 40) -> list[str]:
+    interesting_tokens = (
+        "codex_obsidian_sync",
+        "DryRunOutput",
+        "sync_once",
+        "run_sync",
+        "read_relative",
+        "read_to_string",
+        "open",
+        "__open",
+    )
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if any(token in stripped for token in interesting_tokens):
+            lines.append(stripped)
+        if len(lines) >= limit:
+            break
+    if lines:
+        return lines
+    return [line.strip() for line in text.splitlines()[:limit] if line.strip()]
+
+
+def sample_seconds_arg(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def cleanup_output_dir(path: Path, work_dir: Path) -> str | None:
