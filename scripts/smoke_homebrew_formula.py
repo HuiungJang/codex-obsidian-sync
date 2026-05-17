@@ -8,12 +8,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 
 FORMULA_NAME = "codex-obsidian-sync"
+SMOKE_TAP_OWNER = "codex-smoke"
+SMOKE_TAP_REPO_PREFIX = "codex-obsidian-sync-smoke"
 SESSION_ID = "019f5f16-0000-7000-8000-000000000301"
 TRANSCRIPT_TEXT = "Homebrew smoke transcript text should stay out of status summary state"
 
@@ -69,9 +72,27 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
     if brew_formula_is_installed(brew_path, commands):
         raise RuntimeError(f"Homebrew formula is already installed: {FORMULA_NAME}")
 
+    tap_name = f"{SMOKE_TAP_OWNER}/{SMOKE_TAP_REPO_PREFIX}-{uuid.uuid4().hex[:12]}"
+    install_formula = f"{tap_name}/{FORMULA_NAME}"
+    tap_formula: Path | None = None
+    install_formula_sha256: str | None = None
+    tap_created = False
     installed_by_script = False
+    cleanup_errors: list[str] = []
     try:
-        run_checked([str(brew_path), "install", "--formula", str(formula)], commands)
+        run_checked([str(brew_path), "tap-new", "--no-git", tap_name], commands)
+        tap_created = True
+        tap_formula = copy_formula_into_tap(
+            brew_path=brew_path,
+            tap_name=tap_name,
+            formula=formula,
+            commands=commands,
+        )
+        install_formula_sha256 = hashlib.sha256(tap_formula.read_bytes()).hexdigest()
+        if install_formula_sha256 != formula_sha256:
+            raise RuntimeError("Formula copied into the temporary tap does not match the generated formula")
+
+        run_checked([str(brew_path), "install", "--formula", install_formula], commands)
         installed_by_script = True
 
         prefix = run_checked([str(brew_path), "--prefix", FORMULA_NAME], commands).stdout.strip()
@@ -88,7 +109,16 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
         run_checked([str(brew_path), "test", FORMULA_NAME], commands)
     finally:
         if installed_by_script:
-            run_checked([str(brew_path), "uninstall", "--formula", FORMULA_NAME], commands)
+            run_cleanup(
+                [str(brew_path), "uninstall", "--formula", FORMULA_NAME],
+                commands,
+                cleanup_errors,
+            )
+        if tap_created:
+            run_cleanup([str(brew_path), "untap", "--force", tap_name], commands, cleanup_errors)
+
+    if cleanup_errors:
+        raise RuntimeError("\n".join(cleanup_errors))
 
     installed_after = brew_formula_is_installed(brew_path, commands)
     if installed_after:
@@ -99,6 +129,10 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
         "generated_at": datetime.now(UTC).isoformat(),
         "formula": str(formula),
         "formula_sha256": formula_sha256,
+        "tap": tap_name,
+        "install_formula": install_formula,
+        "install_formula_path": str(tap_formula) if tap_formula else None,
+        "install_formula_sha256": install_formula_sha256,
         "brew": str(brew_path),
         "expected_version": expected_version,
         "version": version_output,
@@ -107,6 +141,37 @@ def run_smoke(*, formula: Path, expected_version: str, brew: str) -> dict[str, A
         **smoke_details,
         "commands": commands,
     }
+
+
+def copy_formula_into_tap(
+    *,
+    brew_path: Path,
+    tap_name: str,
+    formula: Path,
+    commands: list[dict[str, Any]],
+) -> Path:
+    tap_root_output = run_checked([str(brew_path), "--repository", tap_name], commands).stdout.strip()
+    if not tap_root_output:
+        raise RuntimeError(f"Homebrew did not report a repository path for tap: {tap_name}")
+    tap_root = Path(tap_root_output)
+    tap_formula = tap_root / "Formula" / f"{FORMULA_NAME}.rb"
+    tap_formula.parent.mkdir(parents=True, exist_ok=True)
+    if tap_formula.is_symlink():
+        raise RuntimeError(f"Temporary tap formula path is a symlink: {tap_formula}")
+    shutil.copyfile(formula, tap_formula)
+    tap_formula.chmod(0o644)
+    return tap_formula
+
+
+def run_cleanup(
+    command: list[str],
+    commands: list[dict[str, Any]],
+    cleanup_errors: list[str],
+) -> None:
+    result = run_capture(command)
+    commands.append(command_record(result))
+    if result.returncode != 0:
+        cleanup_errors.append(format_command_failure(result))
 
 
 def brew_formula_is_installed(brew_path: Path, commands: list[dict[str, Any]]) -> bool:

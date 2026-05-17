@@ -548,6 +548,8 @@ def audit_homebrew_smoke_summary(
     commands = summary.get("commands")
     installed_binary = summary.get("installed_binary")
     formula_value = summary.get("formula")
+    install_formula_value = summary.get("install_formula")
+    install_formula_path = summary.get("install_formula_path")
     brew_value = summary.get("brew")
     expected_formula_sha256 = formula_sha256(formula_path)
     details.update(
@@ -557,6 +559,9 @@ def audit_homebrew_smoke_summary(
             "brew": brew_value,
             "formula_sha256": summary.get("formula_sha256"),
             "expected_formula_sha256": expected_formula_sha256,
+            "install_formula": install_formula_value,
+            "install_formula_path": install_formula_path,
+            "install_formula_sha256": summary.get("install_formula_sha256"),
             "summary_expected_version": summary.get("expected_version"),
             "version": summary.get("version"),
             "installed_binary": installed_binary,
@@ -594,6 +599,15 @@ def audit_homebrew_smoke_summary(
             reasons.append("Homebrew smoke brew path is not absolute")
     if summary.get("formula_sha256") != expected_formula_sha256:
         reasons.append("Homebrew smoke formula checksum does not match generated formula")
+    if install_formula_value is not None and (not isinstance(install_formula_value, str) or not install_formula_value):
+        reasons.append("Homebrew smoke install formula is invalid")
+    if install_formula_path is not None:
+        if not isinstance(install_formula_path, str) or not install_formula_path:
+            reasons.append("Homebrew smoke install formula path is invalid")
+        elif not Path(install_formula_path).is_absolute():
+            reasons.append("Homebrew smoke install formula path is not absolute")
+    if summary.get("install_formula_sha256") not in (None, expected_formula_sha256):
+        reasons.append("Homebrew smoke install formula checksum does not match generated formula")
     if summary.get("installed_after") is not False:
         reasons.append("Homebrew smoke did not prove the formula was uninstalled")
     for field in ("status_configured", "status_json_parsed", "dry_run", "vault_unchanged"):
@@ -616,7 +630,15 @@ def audit_homebrew_smoke_summary(
             "test": ("test", FORMULA_NAME),
             "uninstall": ("uninstall", "--formula", FORMULA_NAME),
         }
-        if not has_successful_brew_command_with_next_arg(commands, ("install", "--formula"), formula_value, brew_value):
+        install_args = [
+            value
+            for value in (formula_value, install_formula_value)
+            if isinstance(value, str) and value
+        ]
+        if not any(
+            has_successful_brew_command_with_next_arg(commands, ("install", "--formula"), value, brew_value)
+            for value in install_args
+        ):
             reasons.append("Homebrew smoke did not record successful brew install for recorded formula")
         if homebrew_prefix is None:
             reasons.append("Homebrew smoke did not record successful brew prefix")

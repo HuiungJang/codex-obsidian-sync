@@ -43,6 +43,9 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["brew"], str(brew.resolve()))
         self.assertEqual(report["formula_sha256"], formula_sha256)
+        self.assertEqual(report["install_formula_sha256"], formula_sha256)
+        self.assertTrue(report["install_formula"].startswith("codex-smoke/codex-obsidian-sync-smoke-"))
+        self.assertTrue(Path(report["install_formula_path"]).is_absolute())
         self.assertEqual(report["version"], "codex-obsidian-sync 0.1.0")
         self.assertTrue(report["installed_binary"].endswith("/bin/codex-obsidian-sync"))
         self.assertFalse(report["installed_after"])
@@ -69,10 +72,12 @@ class SmokeHomebrewFormulaTests(unittest.TestCase):
         self.assertEqual(version_commands[0]["stdout"].strip(), "codex-obsidian-sync 0.1.0")
         self.assertEqual(status_commands[0]["returncode"], 0)
         self.assertEqual(sync_commands[0]["returncode"], 0)
-        self.assertIn(f"install --formula {formula.resolve()}", log)
+        self.assertIn("tap-new --no-git codex-smoke/codex-obsidian-sync-smoke-", log)
+        self.assertIn("install --formula codex-smoke/codex-obsidian-sync-smoke-", log)
         self.assertIn("--prefix codex-obsidian-sync", log)
         self.assertIn("test codex-obsidian-sync", log)
         self.assertIn("uninstall --formula codex-obsidian-sync", log)
+        self.assertIn("untap --force codex-smoke/codex-obsidian-sync-smoke-", log)
 
     def test_refuses_to_smoke_when_formula_is_already_installed(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-brew-smoke-") as temp_dir:
@@ -245,8 +250,24 @@ raise SystemExit(2)
 args = sys.argv[1:]
 if args == ["list", "--formula", "codex-obsidian-sync"]:
     sys.exit(0 if state.exists() else 1)
+if len(args) == 3 and args[0:2] == ["tap-new", "--no-git"]:
+    tap = args[2]
+    tap_root = root / "Taps" / tap.replace("/", "__")
+    (tap_root / "Formula").mkdir(parents=True, exist_ok=True)
+    sys.exit(0)
+if len(args) == 2 and args[0] == "--repository":
+    tap = args[1]
+    tap_root = root / "Taps" / tap.replace("/", "__")
+    if not tap_root.exists():
+        sys.exit(1)
+    print(tap_root)
+    sys.exit(0)
 if len(args) == 3 and args[0:2] == ["install", "--formula"]:
-    if not Path(args[2]).is_file():
+    formula = Path(args[2])
+    if not formula.is_file() and "/" in args[2]:
+        tap_parts = args[2].split("/")
+        formula = root / "Taps" / "__".join(tap_parts[:2]) / "Formula" / f"{{tap_parts[2]}}.rb"
+    if not formula.is_file():
         print("formula missing", file=sys.stderr)
         sys.exit(1)
     install_binary()
@@ -264,6 +285,10 @@ if args == ["uninstall", "--formula", "codex-obsidian-sync"]:
     if state.exists():
         shutil.rmtree(prefix.parent, ignore_errors=True)
         state.unlink()
+    sys.exit(0)
+if len(args) == 3 and args[0:2] == ["untap", "--force"]:
+    tap = args[2]
+    shutil.rmtree(root / "Taps" / tap.replace("/", "__"), ignore_errors=True)
     sys.exit(0)
 print("unexpected args: " + " ".join(args), file=sys.stderr)
 sys.exit(2)
