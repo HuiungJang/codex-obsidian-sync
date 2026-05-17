@@ -56,6 +56,48 @@ class AuditReleaseEvidenceTests(unittest.TestCase):
         self.assertCheckOk(report, "release smoke summary:x86_64-apple-darwin")
         self.assertCheckOk(report, "homebrew smoke summary")
 
+    def test_accepts_homebrew_smoke_installed_from_temporary_tap(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
+            release_dir = Path(temp_dir)
+            checksums = write_release_artifacts(release_dir)
+            formula = write_formula(release_dir, checksums)
+            formula_sha256 = hashlib.sha256(formula.read_bytes()).hexdigest()
+            install_formula = "codex-smoke/codex-obsidian-sync-smoke-123456789abc/codex-obsidian-sync"
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(
+                release_dir,
+                formula,
+                install_formula=install_formula,
+                summary_install_formula=install_formula,
+                summary_install_formula_path=str((release_dir / "tap" / "Formula" / formula.name).resolve()),
+                summary_install_formula_sha256=formula_sha256,
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_release_evidence.py",
+                    "--version",
+                    "0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report["ok"], report["no_go_reasons"])
+        self.assertCheckOk(report, "homebrew smoke summary")
+        smoke_matches = [item for item in report["checks"] if item["name"] == "homebrew smoke summary"]
+        self.assertEqual(len(smoke_matches), 1)
+        smoke_check = smoke_matches[0]
+        self.assertEqual(smoke_check["details"]["install_formula"], install_formula)
+
     def test_refuses_symlinked_output_report_path(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-release-evidence-") as temp_dir:
             root = Path(temp_dir)
@@ -2237,6 +2279,9 @@ def write_homebrew_smoke_summary(
     recorded_brew: str | None = None,
     prefix_stdout: str = "/tmp/codex-obsidian-sync\n",
     processed: int = 1,
+    summary_install_formula: str | None = None,
+    summary_install_formula_path: str | None = None,
+    summary_install_formula_sha256: str | None = None,
 ) -> None:
     formula_path = str(formula.resolve())
     install_formula_path = install_formula or formula_path
@@ -2301,6 +2346,12 @@ def write_homebrew_smoke_summary(
     }
     if recorded_brew is not None:
         summary["brew"] = recorded_brew
+    if summary_install_formula is not None:
+        summary["install_formula"] = summary_install_formula
+    if summary_install_formula_path is not None:
+        summary["install_formula_path"] = summary_install_formula_path
+    if summary_install_formula_sha256 is not None:
+        summary["install_formula_sha256"] = summary_install_formula_sha256
     (release_dir / "homebrew-smoke-summary.json").write_text(
         json.dumps(summary) + "\n",
         encoding="utf-8",
