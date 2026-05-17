@@ -763,8 +763,10 @@ def audit_installed_rust_binary_smoke(
 
     config = resolve_installed_smoke_config(config_path, reasons)
     details["config"] = str(config) if config else None
-    resolved_codex_home = resolve_installed_smoke_codex_home(config, codex_home, reasons)
+    installed_config = load_installed_smoke_config(config, reasons)
+    resolved_codex_home = resolve_installed_smoke_codex_home(installed_config, codex_home, reasons)
     details["codex_home"] = str(resolved_codex_home) if resolved_codex_home else None
+    audit_installed_smoke_config_access(installed_config, details, reasons)
     output = resolve_installed_smoke_output_dir(output_dir, reasons)
     details["output_dir"] = str(output) if output else None
     if reasons:
@@ -872,21 +874,33 @@ def resolve_installed_smoke_config(path: Path | None, reasons: list[str]) -> Pat
     return resolved
 
 
-def resolve_installed_smoke_codex_home(
+def load_installed_smoke_config(
     config_path: Path | None,
+    reasons: list[str],
+) -> dict[str, Any] | None:
+    if config_path is None:
+        return None
+    try:
+        with config_path.open("rb") as handle:
+            value = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        reasons.append(f"installed smoke config TOML is invalid: {error}")
+        return None
+    if not isinstance(value, dict):
+        reasons.append("installed smoke config TOML is not an object")
+        return None
+    return value
+
+
+def resolve_installed_smoke_codex_home(
+    config: dict[str, Any] | None,
     codex_home: Path | None,
     reasons: list[str],
 ) -> Path | None:
     if codex_home is not None:
         candidate = codex_home.expanduser()
-    elif config_path is not None:
-        try:
-            with config_path.open("rb") as handle:
-                config = tomllib.load(handle)
-            config_value = config.get("codex_home")
-        except (OSError, tomllib.TOMLDecodeError) as error:
-            reasons.append(f"installed smoke config TOML is invalid: {error}")
-            return None
+    elif config is not None:
+        config_value = config.get("codex_home")
         candidate = Path(config_value).expanduser() if isinstance(config_value, str) and config_value else Path.home() / ".codex"
     else:
         return None
@@ -902,6 +916,91 @@ def resolve_installed_smoke_codex_home(
         reasons.append("installed smoke codex_home is missing")
         return None
     return resolved
+
+
+def audit_installed_smoke_config_access(
+    config: dict[str, Any] | None,
+    details: dict[str, Any],
+    reasons: list[str],
+) -> None:
+    if config is None:
+        return
+
+    vault = absolute_config_path(config, "vault", reasons, "installed smoke vault")
+    details["vault"] = str(vault) if vault else None
+    if vault is not None:
+        validate_readable_directory(vault, "installed smoke vault", reasons)
+        vault_codex = vault / "Codex"
+        details["vault_codex"] = str(vault_codex)
+        if vault_codex.exists() or vault_codex.is_symlink():
+            validate_readable_directory(vault_codex, "installed smoke vault Codex", reasons)
+
+    state_file = absolute_config_path(config, "state_file", reasons, "installed smoke state_file")
+    details["state_file"] = str(state_file) if state_file else None
+    if state_file is not None:
+        validate_readable_parent(state_file, "installed smoke state_file parent", reasons)
+        if state_file.exists() or state_file.is_symlink():
+            validate_readable_file(state_file, "installed smoke state_file", reasons)
+
+
+def absolute_config_path(
+    config: dict[str, Any],
+    key: str,
+    reasons: list[str],
+    label: str,
+) -> Path | None:
+    value = config.get(key)
+    if not isinstance(value, str) or not value:
+        reasons.append(f"{label} is missing")
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        reasons.append(f"{label} is not absolute")
+        return None
+    return path
+
+
+def validate_readable_directory(path: Path, label: str, reasons: list[str]) -> None:
+    if path.is_symlink():
+        reasons.append(f"{label} path is a symlink")
+        return
+    if not path.exists():
+        reasons.append(f"{label} path is missing")
+        return
+    if not path.is_dir():
+        reasons.append(f"{label} path is not a directory")
+        return
+    try:
+        iterator = path.iterdir()
+        next(iterator, None)
+    except OSError as error:
+        reasons.append(f"{label} directory is not readable: {format_os_error(error)}")
+
+
+def validate_readable_parent(path: Path, label: str, reasons: list[str]) -> None:
+    parent = path.parent
+    if parent == path:
+        reasons.append(f"{label} path is invalid")
+        return
+    validate_readable_directory(parent, label, reasons)
+
+
+def validate_readable_file(path: Path, label: str, reasons: list[str]) -> None:
+    if path.is_symlink():
+        reasons.append(f"{label} path is a symlink")
+        return
+    if not path.is_file():
+        reasons.append(f"{label} path is not a file")
+        return
+    try:
+        with path.open("rb") as handle:
+            handle.read(1)
+    except OSError as error:
+        reasons.append(f"{label} is not readable: {format_os_error(error)}")
+
+
+def format_os_error(error: OSError) -> str:
+    return error.strerror or str(error)
 
 
 def resolve_installed_smoke_output_dir(path: Path | None, reasons: list[str]) -> Path | None:

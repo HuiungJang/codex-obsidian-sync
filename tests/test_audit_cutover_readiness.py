@@ -156,10 +156,11 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             plist_path = root / "agent.plist"
             config_path = root / "config.toml"
             codex_home = root / ".codex"
+            vault = root / "vault"
             installed_output = Path("/tmp") / f"codex-obsidian-sync-installed-smoke-{os.getpid()}-{root.name}"
             monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
             codex_home.mkdir()
-            write_installed_smoke_config(config_path, codex_home)
+            write_installed_smoke_config(config_path, codex_home, vault)
             checksums = write_release_artifacts(release_dir)
             write_formula(formula, checksums)
             write_release_smoke_summaries(release_dir)
@@ -208,6 +209,76 @@ class AuditCutoverReadinessTests(unittest.TestCase):
         self.assertCheckOk(report, "installed Rust binary smoke")
         self.assertFalse(installed_output.exists())
 
+    def test_installed_rust_binary_smoke_fails_when_vault_codex_path_is_not_directory(self) -> None:
+        with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "dist"
+            formula = root / "Formula" / "codex-obsidian-sync.rb"
+            rust_binary = write_fake_binary(root / "bin" / "codex-obsidian-sync", "0.1.0")
+            installed_binary = write_fake_installed_binary(root / "installed" / "codex-obsidian-sync", "0.1.0")
+            rollback_binary = write_fake_binary(root / "rollback" / "codex-obsidian-sync", "0.1.0")
+            status_path = root / "status.json"
+            plist_path = root / "agent.plist"
+            config_path = root / "config.toml"
+            codex_home = root / ".codex"
+            vault = root / "vault"
+            installed_output = Path("/tmp") / f"codex-obsidian-sync-installed-smoke-{os.getpid()}-{root.name}"
+            monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
+            codex_home.mkdir()
+            write_installed_smoke_config(config_path, codex_home, vault)
+            (vault / "Codex").rmdir()
+            (vault / "Codex").write_text("not a directory\n", encoding="utf-8")
+            checksums = write_release_artifacts(release_dir)
+            write_formula(formula, checksums)
+            write_release_smoke_summaries(release_dir)
+            write_homebrew_smoke_summary(release_dir, formula)
+            write_status(status_path, plist_path)
+            write_plist(plist_path, str(rollback_binary))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/audit_cutover_readiness.py",
+                    "--version",
+                    "v0.1.0",
+                    "--release-dir",
+                    str(release_dir),
+                    "--homebrew-formula",
+                    str(formula),
+                    "--expected-rust-binary",
+                    str(rust_binary),
+                    "--installed-rust-binary",
+                    str(installed_binary),
+                    "--installed-smoke-config",
+                    str(config_path),
+                    "--installed-smoke-output-dir",
+                    str(installed_output),
+                    "--cleanup-installed-smoke-output",
+                    "--rollback-binary",
+                    str(rollback_binary),
+                    "--status-json-file",
+                    str(status_path),
+                    "--plist-file",
+                    str(plist_path),
+                    "--expected-current-program-arg0",
+                    str(rollback_binary),
+                    "--monitor-dir",
+                    str(monitor_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "installed Rust binary smoke: installed smoke vault Codex path is not a directory",
+            report["no_go_reasons"],
+        )
+        self.assertFalse(installed_output.exists())
+
     def test_installed_rust_binary_smoke_fails_when_real_config_dry_run_fails(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-audit-") as temp_dir:
             root = Path(temp_dir)
@@ -224,10 +295,11 @@ class AuditCutoverReadinessTests(unittest.TestCase):
             plist_path = root / "agent.plist"
             config_path = root / "config.toml"
             codex_home = root / ".codex"
+            vault = root / "vault"
             installed_output = Path("/tmp") / f"codex-obsidian-sync-installed-smoke-{os.getpid()}-{root.name}"
             monitor_dir = Path("/tmp") / f"codex-obsidian-sync-monitor-{os.getpid()}-{root.name}"
             codex_home.mkdir()
-            write_installed_smoke_config(config_path, codex_home)
+            write_installed_smoke_config(config_path, codex_home, vault)
             checksums = write_release_artifacts(release_dir)
             write_formula(formula, checksums)
             write_release_smoke_summaries(release_dir)
@@ -1747,14 +1819,18 @@ else:
     return path
 
 
-def write_installed_smoke_config(path: Path, codex_home: Path) -> None:
+def write_installed_smoke_config(path: Path, codex_home: Path, vault: Path) -> None:
+    vault.mkdir()
+    (vault / "Codex").mkdir()
+    state_file = path.parent / "state.json"
+    state_file.write_text(json.dumps({"files": {}}) + "\n", encoding="utf-8")
     path.write_text(
         "\n".join(
             [
-                'vault = "/tmp/vault"',
+                f'vault = "{vault}"',
                 f'codex_home = "{codex_home}"',
-                'state_file = "/tmp/state.json"',
-                'lock_file = "/tmp/sync.lock"',
+                f'state_file = "{state_file}"',
+                f'lock_file = "{path.parent / "sync.lock"}"',
                 "",
             ]
         ),
