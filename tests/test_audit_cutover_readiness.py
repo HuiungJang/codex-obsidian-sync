@@ -244,6 +244,13 @@ class AuditCutoverReadinessTests(unittest.TestCase):
                 config_path,
                 ok=False,
                 no_go_reasons=["sync-once dry-run timed out"],
+                timeout_diagnosis=(
+                    "sync-once timed out while opening an existing vault note; on macOS, "
+                    "grant Full Disk Access to the binary path recorded in details.binary and rerun this smoke."
+                ),
+                read_trace_tail=[
+                    '{"event":"read_attempt","source":"vault","relative_path":"Codex/Daily/2026-05-14.md"}',
+                ],
             )
 
             result = subprocess.run(
@@ -293,6 +300,16 @@ class AuditCutoverReadinessTests(unittest.TestCase):
         self.assertIn(
             "real LaunchAgent dry-run smoke summary: summary contains no-go reasons",
             report["no_go_reasons"],
+        )
+        self.assertIn(
+            "real LaunchAgent dry-run smoke summary: summary timeout diagnosis indicates Full Disk Access is required",
+            report["no_go_reasons"],
+        )
+        smoke_check = self.getCheck(report, "real LaunchAgent dry-run smoke summary")
+        self.assertIn("Full Disk Access", smoke_check["details"]["timeout_diagnosis"])
+        self.assertEqual(
+            smoke_check["details"]["read_trace_tail"],
+            ['{"event":"read_attempt","source":"vault","relative_path":"Codex/Daily/2026-05-14.md"}'],
         )
 
     def test_real_launchagent_smoke_summary_requires_signing_evidence(self) -> None:
@@ -1805,11 +1822,15 @@ class AuditCutoverReadinessTests(unittest.TestCase):
         )
 
     def assertCheckOk(self, report: dict[str, object], name: str) -> None:
+        match = self.getCheck(report, name)
+        self.assertTrue(match["ok"], match["no_go_reasons"])
+
+    def getCheck(self, report: dict[str, object], name: str) -> dict[str, object]:
         checks = report["checks"]
         self.assertIsInstance(checks, list)
         matches = [item for item in checks if item["name"] == name]
         self.assertEqual(len(matches), 1)
-        self.assertTrue(matches[0]["ok"], matches[0]["no_go_reasons"])
+        return matches[0]
 
 
 def launchagent_status(*, config_path: str = "/tmp/config.toml") -> dict[str, object]:
@@ -1985,6 +2006,8 @@ def write_real_launchagent_smoke_summary(
     codesign_checked: bool = True,
     codesign_identifier: str | None = "com.codex.obsidian-sync",
     codesign_signature: str | None = "adhoc",
+    timeout_diagnosis: str | None = None,
+    read_trace_tail: list[str] | None = None,
 ) -> None:
     details = {
         "binary": str(binary),
@@ -1998,6 +2021,9 @@ def write_real_launchagent_smoke_summary(
         "stdout_parseable_json": True,
         "loaded_after_bootout": False,
         "dry_run_output_exists_after_cleanup": False,
+        "timeout_diagnosis": timeout_diagnosis,
+        "read_trace_tail": read_trace_tail or [],
+        "sample_excerpt": [],
     }
     if include_codesign:
         details["codesign"] = {

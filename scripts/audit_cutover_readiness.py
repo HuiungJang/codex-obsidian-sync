@@ -933,6 +933,9 @@ def audit_real_launchagent_dry_run_summary(
             "stdout_parseable_json": smoke_details.get("stdout_parseable_json"),
             "loaded_after_bootout": smoke_details.get("loaded_after_bootout"),
             "dry_run_output_exists_after_cleanup": smoke_details.get("dry_run_output_exists_after_cleanup"),
+            "timeout_diagnosis": smoke_details.get("timeout_diagnosis"),
+            "read_trace_tail": smoke_details.get("read_trace_tail"),
+            "sample_excerpt": smoke_details.get("sample_excerpt"),
         }
     )
     codesign = smoke_details.get("codesign")
@@ -980,6 +983,9 @@ def audit_real_launchagent_dry_run_summary(
         reasons.append("summary did not prove temporary LaunchAgent bootout")
     if smoke_details.get("dry_run_output_exists_after_cleanup") is not False:
         reasons.append("summary did not prove dry-run output cleanup")
+    timeout_diagnosis = smoke_details.get("timeout_diagnosis")
+    if isinstance(timeout_diagnosis, str) and "Full Disk Access" in timeout_diagnosis:
+        reasons.append("summary timeout diagnosis indicates Full Disk Access is required")
 
     return check("real LaunchAgent dry-run smoke summary", not reasons, details, reasons)
 
