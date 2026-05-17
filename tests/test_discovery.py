@@ -179,6 +179,101 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(envelope.title_seed, "fallback-title-from-index")
         self.assertEqual(envelope.project_slug, "demo-project")
 
+    def test_build_session_envelope_redacts_thread_name_for_title(self) -> None:
+        session_id = "019d23a7-9258-7810-93cc-c6833b3481ce"
+        github_token = "ghp_" + ("a" * 36)
+
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            index_path = temp_path / "session_index.jsonl"
+            rollout_path = temp_path / f"rollout-2026-03-25T15-21-17-{session_id}.jsonl"
+
+            self._write_jsonl(
+                index_path,
+                [
+                    {
+                        "id": session_id,
+                        "thread_name": f"Fallback {github_token}",
+                        "updated_at": "2026-03-25T06:30:00Z",
+                    }
+                ],
+            )
+            self._write_jsonl(
+                rollout_path,
+                [
+                    {
+                        "timestamp": "2026-03-25T06:21:17Z",
+                        "type": "session_meta",
+                        "payload": {
+                            "id": session_id,
+                            "timestamp": "2026-03-25T06:21:17Z",
+                            "cwd": "/tmp/demo-project",
+                            "originator": "codex_cli_rs",
+                            "source": "cli",
+                        },
+                    },
+                    self._message_record(
+                        timestamp="2026-03-25T06:21:23Z",
+                        role="assistant",
+                        phase="final_answer",
+                        text="Assistant only conversation",
+                    ),
+                ],
+            )
+
+            envelope = build_session_envelope(rollout_path, load_session_index(index_path))
+
+        self.assertNotIn(github_token, envelope.thread_name or "")
+        self.assertNotIn(github_token, envelope.title_seed)
+        self.assertEqual(envelope.thread_name, "Fallback [REDACTED_GITHUB_TOKEN]")
+        self.assertEqual(envelope.title_seed, "fallback-redacted_github_token")
+
+    def test_build_session_envelope_redacts_first_prompt_for_title_seed(self) -> None:
+        session_id = "019d23a7-9258-7810-93cc-c6833b3481cf"
+        github_token = "ghp_" + ("b" * 36)
+
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            index_path = temp_path / "session_index.jsonl"
+            rollout_path = temp_path / f"rollout-2026-03-25T15-21-17-{session_id}.jsonl"
+
+            self._write_jsonl(
+                index_path,
+                [
+                    {
+                        "id": session_id,
+                        "thread_name": "Safe fallback",
+                        "updated_at": "2026-03-25T06:30:00Z",
+                    }
+                ],
+            )
+            self._write_jsonl(
+                rollout_path,
+                [
+                    {
+                        "timestamp": "2026-03-25T06:21:17Z",
+                        "type": "session_meta",
+                        "payload": {
+                            "id": session_id,
+                            "timestamp": "2026-03-25T06:21:17Z",
+                            "cwd": "/tmp/demo-project",
+                            "originator": "Codex Desktop",
+                            "source": "vscode",
+                        },
+                    },
+                    self._message_record(
+                        timestamp="2026-03-25T06:21:18Z",
+                        role="user",
+                        text=f"Deploy with {github_token}",
+                    ),
+                ],
+            )
+
+            envelope = build_session_envelope(rollout_path, load_session_index(index_path))
+
+        self.assertNotIn(github_token, envelope.title_seed)
+        self.assertEqual(envelope.title_seed, "deploy-with-redacted_github_token")
+
     def test_build_session_envelope_ignores_control_messages_for_title(self) -> None:
         session_id = "019d23a7-9258-7810-93cc-c6833b3481cd"
 

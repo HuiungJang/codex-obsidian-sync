@@ -7,7 +7,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from codex_obsidian_sync.config import resolve_sync_config
-from codex_obsidian_sync.sync import sync_once
+from codex_obsidian_sync.state_store import file_fingerprint
+from codex_obsidian_sync.sync import clear_stale_conversation_notes, sync_once
 from codex_obsidian_sync.writer import CONVERSATION_NOTE_MARKER, TRANSCRIPT_MARKER
 
 
@@ -892,6 +893,81 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(second_summary["fast_path"], 0)
         self.assertEqual(len(notes), 2)
 
+    def test_clear_stale_conversation_note_deletes_only_unmodified_managed_note(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            vault = Path(temp_dir).resolve()
+            stale_relative = "Codex/Conversations/2026/stale.md"
+            active_relative = "Codex/Conversations/2026/active.md"
+            stale_note = vault / stale_relative
+            stale_note.parent.mkdir(parents=True)
+            stale_note.write_text(f"{CONVERSATION_NOTE_MARKER}\n# Stale\n", encoding="utf-8")
+            active_note = vault / active_relative
+            active_note.write_text(f"{CONVERSATION_NOTE_MARKER}\n# Active\n", encoding="utf-8")
+
+            previous = [
+                {
+                    "conversation_note_path": stale_relative,
+                    "conversation_note_fingerprint": file_fingerprint(stale_note),
+                },
+                {
+                    "conversation_note_path": active_relative,
+                    "conversation_note_fingerprint": file_fingerprint(active_note),
+                },
+            ]
+            active = [{"conversation_note_path": active_relative}]
+
+            clear_stale_conversation_notes(vault, previous, active)
+
+            stale_exists = stale_note.exists()
+            active_exists = active_note.exists()
+
+        self.assertFalse(stale_exists)
+        self.assertTrue(active_exists)
+
+    def test_clear_stale_conversation_note_preserves_manual_or_unmarked_note(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            vault = Path(temp_dir).resolve()
+            manual_relative = "Codex/Conversations/2026/manual.md"
+            unmarked_relative = "Codex/Conversations/2026/unmarked.md"
+            missing_fingerprint_relative = "Codex/Conversations/2026/missing-fingerprint.md"
+
+            manual_note = vault / manual_relative
+            manual_note.parent.mkdir(parents=True)
+            manual_note.write_text(f"{CONVERSATION_NOTE_MARKER}\n# Manual\n", encoding="utf-8")
+            manual_fingerprint = file_fingerprint(manual_note)
+            with manual_note.open("a", encoding="utf-8") as handle:
+                handle.write("manual edit\n")
+
+            unmarked_note = vault / unmarked_relative
+            unmarked_note.write_text("# User note\n", encoding="utf-8")
+
+            missing_fingerprint_note = vault / missing_fingerprint_relative
+            missing_fingerprint_note.write_text(f"{CONVERSATION_NOTE_MARKER}\n# No fingerprint\n", encoding="utf-8")
+
+            previous = [
+                {
+                    "conversation_note_path": manual_relative,
+                    "conversation_note_fingerprint": manual_fingerprint,
+                },
+                {
+                    "conversation_note_path": unmarked_relative,
+                    "conversation_note_fingerprint": file_fingerprint(unmarked_note),
+                },
+                {
+                    "conversation_note_path": missing_fingerprint_relative,
+                },
+            ]
+
+            clear_stale_conversation_notes(vault, previous, [])
+
+            manual_exists = manual_note.exists()
+            unmarked_exists = unmarked_note.exists()
+            missing_fingerprint_exists = missing_fingerprint_note.exists()
+
+        self.assertTrue(manual_exists)
+        self.assertTrue(unmarked_exists)
+        self.assertTrue(missing_fingerprint_exists)
+
     def test_sync_once_reapplies_subagent_opt_out(self) -> None:
         session_id = "019d23a7-9258-7810-93cc-c6833b3481e2"
 
@@ -930,6 +1006,7 @@ class SyncTests(unittest.TestCase):
                     include_subagents=True,
                 )
             )
+            conversation_note = next((vault / "Codex" / "Conversations" / "2026").glob("*.md"))
             sync_once(
                 config=self._config(
                     codex_home=codex_home,
@@ -942,10 +1019,68 @@ class SyncTests(unittest.TestCase):
             entry = state["files"][str(rollout_path)]
             daily_text = (vault / "Codex" / "Daily" / "2026-04-03.md").read_text(encoding="utf-8")
             project_text = (vault / "Codex" / "Projects" / "demo-project.md").read_text(encoding="utf-8")
+            conversation_note_exists = conversation_note.exists()
 
         self.assertFalse(entry["included"])
         self.assertNotIn("subagent title", daily_text)
         self.assertNotIn("subagent title", project_text)
+        self.assertFalse(conversation_note_exists)
+
+    def test_sync_once_preserves_manually_edited_stale_conversation_note(self) -> None:
+        session_id = "019d23a7-9258-7810-93cc-c6833b3481e7"
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            codex_home = root / ".codex"
+            sessions_dir = codex_home / "sessions" / "2026" / "04" / "03"
+            sessions_dir.mkdir(parents=True)
+            vault = root / "vault"
+            vault.mkdir()
+            state_file = codex_home / "obsidian-sync" / "sync-state.json"
+            index_path = codex_home / "session_index.jsonl"
+            rollout_path = sessions_dir / f"rollout-2026-04-03T10-47-00-{session_id}.jsonl"
+
+            self._write_jsonl(
+                index_path,
+                [{"id": session_id, "thread_name": "manual subagent", "updated_at": "2026-04-03T01:47:00Z"}],
+            )
+            self._write_jsonl(
+                rollout_path,
+                [
+                    self._session_meta(
+                        session_id=session_id,
+                        timestamp="2026-04-03T01:47:00Z",
+                        source={"subagent": {"thread_spawn": {"parent_thread_id": "parent-session"}}},
+                    ),
+                    self._message_record(timestamp="2026-04-03T01:47:01Z", role="user", text="manual subagent body"),
+                ],
+            )
+
+            sync_once(
+                config=self._config(
+                    codex_home=codex_home,
+                    vault=vault,
+                    state_file=state_file,
+                    include_subagents=True,
+                )
+            )
+            conversation_note = next((vault / "Codex" / "Conversations" / "2026").glob("*.md"))
+            with conversation_note.open("a", encoding="utf-8") as handle:
+                handle.write("manual edit\n")
+
+            sync_once(
+                config=self._config(
+                    codex_home=codex_home,
+                    vault=vault,
+                    state_file=state_file,
+                    include_subagents=False,
+                )
+            )
+            conversation_note_exists = conversation_note.exists()
+            conversation_text = conversation_note.read_text(encoding="utf-8")
+
+        self.assertTrue(conversation_note_exists)
+        self.assertIn("manual edit", conversation_text)
 
     def test_sync_once_surfaces_note_write_failures(self) -> None:
         session_id = "019d23a7-9258-7810-93cc-c6833b3481e3"
@@ -1015,6 +1150,127 @@ class SyncTests(unittest.TestCase):
 
         self.assertNotIn("envelope_cache", state_text)
         self.assertNotIn(raw_secret, state_text)
+
+    def test_sync_once_redacts_generated_metadata_and_state(self) -> None:
+        session_id = "019d23a7-9258-7810-93cc-c6833b3481f0"
+        github_token = "ghp_" + ("a" * 36)
+        quoted_secret = "supersecretvalue"
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            codex_home = root / ".codex"
+            sessions_dir = codex_home / "sessions" / "2026" / "04" / "03"
+            sessions_dir.mkdir(parents=True)
+            vault = root / "vault"
+            vault.mkdir()
+            state_file = codex_home / "obsidian-sync" / "sync-state.json"
+            index_path = codex_home / "session_index.jsonl"
+            rollout_path = sessions_dir / f"rollout-2026-04-03T10-50-00-{session_id}.jsonl"
+
+            self._write_jsonl(
+                index_path,
+                [
+                    {
+                        "id": session_id,
+                        "thread_name": f"Deploy {github_token}",
+                        "updated_at": "2026-04-03T01:50:00Z",
+                    }
+                ],
+            )
+            self._write_jsonl(
+                rollout_path,
+                [
+                    self._session_meta(session_id=session_id, timestamp="2026-04-03T01:50:00Z"),
+                    self._message_record(
+                        timestamp="2026-04-03T01:50:01Z",
+                        role="user",
+                        text=f'Deploy with {github_token} and "client_secret": "{quoted_secret}"',
+                    ),
+                ],
+            )
+
+            first_summary = sync_once(config=self._config(codex_home=codex_home, vault=vault, state_file=state_file))
+            second_summary = sync_once(config=self._config(codex_home=codex_home, vault=vault, state_file=state_file))
+            conversation_note = next((vault / "Codex" / "Conversations" / "2026").glob("*.md"))
+            conversation_text = conversation_note.read_text(encoding="utf-8")
+            daily_text = (vault / "Codex" / "Daily" / "2026-04-03.md").read_text(encoding="utf-8")
+            project_text = (vault / "Codex" / "Projects" / "demo-project.md").read_text(encoding="utf-8")
+            state_text = state_file.read_text(encoding="utf-8")
+
+        self.assertEqual(first_summary["processed"], 1)
+        self.assertEqual(second_summary["processed"], 0)
+        for artifact in (
+            conversation_note.name,
+            conversation_text,
+            daily_text,
+            project_text,
+            state_text,
+        ):
+            self.assertNotIn(github_token, artifact)
+            self.assertNotIn(quoted_secret, artifact)
+        self.assertIn("redacted_github_token", conversation_note.name)
+        self.assertIn("[REDACTED_GITHUB_TOKEN]", conversation_text)
+        self.assertIn("[REDACTED_SECRET]", conversation_text)
+
+    def test_sync_once_deletes_old_unmodified_note_after_redacted_path_change(self) -> None:
+        session_id = "019d23a7-9258-7810-93cc-c6833b3481f1"
+        github_token = "ghp_" + ("b" * 36)
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            codex_home = root / ".codex"
+            sessions_dir = codex_home / "sessions" / "2026" / "04" / "03"
+            sessions_dir.mkdir(parents=True)
+            vault = root / "vault"
+            vault.mkdir()
+            state_file = codex_home / "obsidian-sync" / "sync-state.json"
+            index_path = codex_home / "session_index.jsonl"
+            rollout_path = sessions_dir / f"rollout-2026-04-03T10-51-00-{session_id}.jsonl"
+
+            self._write_jsonl(
+                index_path,
+                [
+                    {
+                        "id": session_id,
+                        "thread_name": f"Deploy {github_token}",
+                        "updated_at": "2026-04-03T01:51:00Z",
+                    }
+                ],
+            )
+            self._write_jsonl(
+                rollout_path,
+                [
+                    self._session_meta(session_id=session_id, timestamp="2026-04-03T01:51:00Z"),
+                    self._message_record(
+                        timestamp="2026-04-03T01:51:01Z",
+                        role="user",
+                        text=f"Deploy with {github_token}",
+                    ),
+                ],
+            )
+
+            sync_once(config=self._config(codex_home=codex_home, vault=vault, state_file=state_file))
+            redacted_note = next((vault / "Codex" / "Conversations" / "2026").glob("*.md"))
+            old_relative = f"Codex/Conversations/2026/2026-04-03-1051-deploy-with-{github_token}.md"
+            old_note = vault / old_relative
+            old_note.write_text(f"{CONVERSATION_NOTE_MARKER}\n# old raw note\n", encoding="utf-8")
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            entry = state["files"][str(rollout_path)]
+            entry["conversation_note_path"] = old_relative
+            entry["thread_name"] = f"Deploy {github_token}"
+            entry["conversation_note_fingerprint"] = file_fingerprint(old_note)
+            state.pop("privacy_migration_version", None)
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            sync_once(config=self._config(codex_home=codex_home, vault=vault, state_file=state_file))
+            state_text = state_file.read_text(encoding="utf-8")
+            old_exists = old_note.exists()
+            redacted_exists = redacted_note.exists()
+
+        self.assertFalse(old_exists)
+        self.assertTrue(redacted_exists)
+        self.assertNotIn(github_token, state_text)
 
     def test_sync_once_refreshes_thread_name_during_append(self) -> None:
         session_id = "019d23a7-9258-7810-93cc-c6833b3481e5"
