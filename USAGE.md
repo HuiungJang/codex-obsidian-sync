@@ -18,7 +18,7 @@ Rust migration build에서는 background write가 별도 config gate 뒤에 있�
 릴리스가 공개된 뒤 일반 사용자는 GitHub Release의 macOS binary를 설치한다.
 
 ```bash
-VERSION=v0.1.0 # replace with the current release tag
+VERSION=v0.1.1 # replace with the current release tag
 TARGET="$(uname -m)"
 case "$TARGET" in
   arm64) TARGET=aarch64-apple-darwin ;;
