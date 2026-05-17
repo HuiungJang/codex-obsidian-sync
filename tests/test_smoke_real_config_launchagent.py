@@ -196,6 +196,30 @@ class SmokeRealConfigLaunchAgentTests(unittest.TestCase):
         self.assertTrue(Path(report["details"]["sample_output"]).is_file())
         self.assertIn("DryRunOutput::read_relative", "\n".join(report["details"]["sample_excerpt"]))
 
+    def test_diagnoses_vault_open_timeout_when_trace_and_sample_match(self) -> None:
+        diagnosis = smoke_real_config_launchagent.timeout_diagnosis(
+            {
+                "sample_excerpt": [
+                    "DryRunOutput::read_relative",
+                    "std::fs::read_to_string",
+                    "open",
+                    "__open",
+                ]
+            },
+            ['{"event":"read_attempt","source":"vault","relative_path":"Codex/Daily/2026-05-14.md"}'],
+        )
+
+        self.assertIsNotNone(diagnosis)
+        self.assertIn("Full Disk Access", diagnosis)
+
+    def test_timeout_diagnosis_requires_trace_evidence(self) -> None:
+        diagnosis = smoke_real_config_launchagent.timeout_diagnosis(
+            {"sample_excerpt": ["std::fs::read_to_string", "open"]},
+            [],
+        )
+
+        self.assertIsNone(diagnosis)
+
     def test_rejects_real_service_label(self) -> None:
         with TemporaryDirectory(prefix="codex-obsidian-sync-real-launchagent-test-") as temp_dir:
             root = Path(temp_dir)

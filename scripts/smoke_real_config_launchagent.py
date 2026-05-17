@@ -273,6 +273,7 @@ def run_smoke(
                 no_go_reasons.append(cleanup_error)
         read_trace_head = read_trace_excerpt(read_trace_path, from_tail=False) if read_trace_path else []
         read_trace_tail = read_trace_excerpt(read_trace_path, from_tail=True) if read_trace_path else []
+        timeout_diagnosis_text = timeout_diagnosis(details, read_trace_tail) if timed_out else None
         details.update(
             {
                 "target": target,
@@ -289,6 +290,7 @@ def run_smoke(
                 "read_trace_exists": read_trace_path.is_file() if read_trace_path else None,
                 "read_trace_head": read_trace_head,
                 "read_trace_tail": read_trace_tail,
+                "timeout_diagnosis": timeout_diagnosis_text,
                 "cleanup_error": cleanup_error,
                 "command_count": len(commands),
                 "loaded_after_bootout": loaded_after_bootout,
@@ -542,6 +544,19 @@ def read_trace_excerpt(path: Path, *, from_tail: bool, limit: int = 20) -> list[
     if from_tail:
         return lines[-limit:]
     return lines[:limit]
+
+
+def timeout_diagnosis(details: dict[str, Any], read_trace_tail: list[str]) -> str | None:
+    sample_excerpt = "\n".join(str(line) for line in details.get("sample_excerpt") or [])
+    blocked_on_file_open = "read_to_string" in sample_excerpt and (
+        "\nopen" in sample_excerpt or "__open" in sample_excerpt
+    )
+    if read_trace_tail and blocked_on_file_open:
+        return (
+            "sync-once timed out while opening an existing vault note; on macOS, grant Full Disk "
+            "Access to the binary path recorded in details.binary and rerun this smoke."
+        )
+    return None
 
 
 def first_nonempty_line(text: str) -> str:
